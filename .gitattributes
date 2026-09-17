@@ -1,0 +1,11 @@
+# All text files use LF in the repo and in working copies, on every OS
+* text=auto eol=lf
+
+# Windows scripts need CRLF
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Binaries: never convert
+*.jar binary
+*.png binary
+*.jpg binary
