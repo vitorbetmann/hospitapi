@@ -22,7 +22,11 @@ root `docker-compose.yml`.
 - Java 21, **Spring Boot 4.1.1**, Maven (each service's own wrapper), Jar packaging
 - Group `com.vitorbetmann`. Packages `com.vitorbetmann.hospitapi.scheduling`
   and `com.vitorbetmann.hospitapi.notification`
+<<<<<<< HEAD
 - `application.properties` only (no YAML)
+=======
+- `application.yml` only (no `.properties`)
+>>>>>>> 4645f04446b08433e8e2de54d9661004f84b9a19
 - PostgreSQL, Flyway, Spring Data JPA, Spring AMQP, Actuator, Lombok,
   Testcontainers
 - Infrastructure is started with `docker compose up` from the repo root.
