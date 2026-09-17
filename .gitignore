@@ -1,0 +1,38 @@
+# Maven build output
+target/
+!**/src/main/**/target/
+!**/src/test/**/target/
+HELP.md
+
+# IntelliJ IDEA
+.idea/
+*.iml
+*.ipr
+*.iws
+out/
+
+# VS Code
+.vscode/
+
+# Eclipse / Spring Tools
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+bin/
+!**/src/main/**/bin/
+!**/src/test/**/bin/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local secrets and logs
+.env
+*.log
+
+# Claude Code personal settings (shared .claude/settings.json stays committed)
+.claude/settings.local.json
