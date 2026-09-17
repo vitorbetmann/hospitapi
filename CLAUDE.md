@@ -69,15 +69,16 @@ root `compose.yaml`.
 - **JUnit 6.0.3**, not JUnit 5. Everyday annotations are unchanged, but
   suspect this first when a snippet from a tutorial won't compile.
 
-## Domain
+## Domain (Part 2, authoritative)
 
-- User: id, username, passwordHash, role (DOCTOR | NURSE | PATIENT),
-  patientId (nullable, only for PATIENT)
+- User: id, username, passwordHash ({bcrypt}... form), name,
+  role (DOCTOR | NURSE | PATIENT), patient (nullable @ManyToOne, PATIENT only)
 - Patient: id, name, email, phone
-- Appointment: id, patientId, doctorId, dateTime,
-  status (SCHEDULED | COMPLETED | CANCELLED), reason, notes, createdAt, updatedAt
+- Appointment: id, patient (@ManyToOne), doctor (@ManyToOne User),
+  scheduledAt, status (SCHEDULED | COMPLETED | CANCELLED), reason, notes,
+  createdAt, updatedAt
 - AppointmentEvent: eventId, type (CREATED | UPDATED), appointmentId,
-  patientName, patientEmail, dateTime, occurredAt
+  patientName, patientEmail, scheduledAt, occurredAt
 
 ## Access rules
 
@@ -100,8 +101,9 @@ root `compose.yaml`.
   `baselineOnMigrate` stays `false` (D-021), so Flyway fails at startup on a
   non-empty schema with no history table. Experiment in a throwaway database
   or a Testcontainers instance instead.
-- New decisions go in `docs/decisions.md` using its entry template, with the
-  next free ID. Never renumber or delete entries; supersede them.
+- New decisions go in `docs/decisions.md` using its entry template and
+  cross-reference conventions, with the next free ID. Never renumber or
+  delete entries; supersede them.
 
 ## Dev environment
 
@@ -158,9 +160,9 @@ RabbitMQ management UI: `localhost:15672`.
 
 ## Parts (progress)
 
-- [X] 
+- [x] 
     0. Setup: Initializr projects, repo, CLAUDE.md, docs/, push to GitHub
-- [X] 
+- [x] 
     1. Infrastructure: compose.yaml (Postgres, RabbitMQ), application.properties per service, apps start and connect
 - [ ] 
     2. Domain & persistence: entities, repositories, Flyway, seed data
@@ -175,6 +177,9 @@ RabbitMQ management UI: `localhost:15672`.
 - [ ] 
     7. Tests: unit + Testcontainers integration (GraphQL, RabbitMQ)
 - [ ] 
-    8. Deliverables: README, Postman collection per role incl. denials
+    8. Deliverables: Dockerfiles and app services in `compose.yaml` for one-command startup, revisit health-detail
+       exposure (D-020), README (architecture, how to run, schema, example operations, credentials), Postman collection
+       per
+       role incl. denials
 - [ ] 
-    9. (Optional) hospitapi-history
+    9. (Optional) Extract the `history/` service

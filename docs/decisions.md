@@ -9,6 +9,20 @@ Rules:
   `Supersedes D-xxx` and set the old entry's status to `Superseded by D-yyy`.
 - Keep each entry short: what was decided, and why.
 
+Cross-references — two mechanisms, deliberately distinct:
+
+- **`Supersedes D-xxx` / `Superseded by D-xxx`** — a later decision reverses
+  or replaces an earlier one. New entry, new ID; the old entry's text is
+  never edited, only its Status changes to `Superseded by D-yyy`.
+- **`[... — see D-xxx]`** — an editorial annotation on an entry whose
+  decision still stands but whose details have drifted (a renamed file, a
+  moved path). Added in square brackets so the original wording stays
+  legible. No new ID.
+
+If unsure which applies: ask whether the original choice would be made
+differently today. If yes, supersede. If the choice is unchanged and only its
+description is stale, annotate.
+
 Entry template:
 
 ```
@@ -27,7 +41,8 @@ Entry template:
 - Status: Accepted
 - Part: Planning
 - Decision: A single repo `hospitapi` with one folder per service, each its
-  own Maven project with its own `mvnw`, no root pom. One root `docker-compose.yml`.
+  own Maven project with its own `mvnw`, no root pom. One root `docker-compose.yml`
+  [now `compose.yaml` — see D-019].
 - Why: The brief asks for separate services; standalone projects keep them
   independently buildable, while one repo keeps delivery and review simple.
 - Alternatives considered: multi-module Maven build; one repo per service.
@@ -250,6 +265,81 @@ Entry template:
 - Alternatives considered: H2 for repository tests (different dialect from
   production, forces dialect-neutral migrations); requiring `docker compose up`
   before every test run (machine-specific setup, shared mutable state).
+
+### D-023 Formatting is left to each developer's editor
+
+- Status: Accepted
+- Part: 1
+- Decision: No formatter config, tab/space rule or line width is committed to
+  the repo. Each machine formats with the developer's own tooling.
+- Why: Solo project with one developer on two machines; a committed config
+  and a repo-wide reformat commit cost more than the occasional noisy diff.
+- Alternatives considered: a one-time repo-wide reformat plus settings
+  recorded in CLAUDE.md; matching Initializr's generated tabs.
+
+### D-024 Surrogate keys are bigint identity columns
+
+- Status: Accepted
+- Part: 2
+- Decision: Every table uses `id bigint generated always as identity primary
+  key`, mapped with `@GeneratedValue(strategy = GenerationType.IDENTITY)`.
+- Why: Reviewers hand-write GraphQL operations and Postman requests against
+  seeded rows, and `appointment(id: 1)` is far easier to type and read than a
+  UUID. Guessable IDs also make the patient-ownership denial (D-004) easy to
+  demonstrate rather than something to hide behind unguessable keys.
+- Alternatives considered: `uuid` primary keys (opaque IDs, no reliance on
+  authorization for obscurity, but every FK, seed row and Postman example
+  becomes a 36-character literal); database sequences with an allocation size.
+
+### D-025 Entities use JPA associations, not raw foreign-key fields
+
+- Status: Accepted
+- Part: 2
+- Decision: `Appointment` holds `@ManyToOne Patient patient` and
+  `@ManyToOne User doctor`; `User` holds `@ManyToOne Patient patient`. The
+  planning draft's `patientId` / `doctorId` value fields are dropped.
+- Why: Part 4 exposes nested GraphQL fields (`patient { name }`) and Part 5's
+  event payload carries `patientName` and `patientEmail`; with raw IDs both
+  turn into manual repository lookups in every resolver and publisher.
+- Alternatives considered: raw ID fields with explicit lookups (no lazy-loading
+  surprises, no N+1, but hand-written joins everywhere). Consequence accepted:
+  lazy associations can cause N+1 in GraphQL, to be addressed with batch
+  loading in Part 4.
+
+### D-026 Doctors are User rows; only patients are a separate entity
+
+- Status: Accepted
+- Part: 2
+- Decision: Add `name` to `User`. `appointments.doctor_id` references
+  `users.id`. `Patient` remains the only party with contact details (email,
+  phone). No `Doctor` entity and no `User.doctorId`.
+- Why: Only patients receive reminders, so only patients need contact data. A
+  doctor needs a display name and nothing else the brief asks for.
+- Alternatives considered: a `Doctor` entity mirroring `Patient` with
+  `User.doctorId` alongside `User.patientId` (symmetric, but duplicates a table
+  for no requirement). Consequence accepted: no FK can enforce that
+  `doctor_id` points at a user whose role is DOCTOR; that check lives in the
+  service layer.
+
+### D-027 Schema and seed data are separate Flyway migrations
+
+- Status: Accepted
+- Part: 2
+- Decision: `V1__init.sql` contains DDL only; `V2__seed_data.sql` contains
+  seed rows only. Seed rows insert explicit IDs with `overriding system value`
+  and then advance each identity with
+  `alter table <t> alter column id restart with 100`. Appointment times are
+  relative (`now() + interval '3 days'`).
+- Why: Splitting the files lets the schema change later without rewriting seed
+  data in the same file. Explicit IDs give reviewers stable handles (patient 1,
+  appointment 1) and the identity restart prevents the classic duplicate-key
+  failure on the first application insert. Relative times keep "future"
+  appointments future whenever the reviewer runs it, which Part 4's
+  `onlyFuture` filter and Part 6's 24h job both depend on.
+- Alternatives considered: schema and seed in one `V1` (fewer files, but seed
+  edits churn the schema migration); Spring Boot `data.sql` (runs outside
+  Flyway's version history, conflicts with D-009); a `@Profile("dev")` seeder
+  bean (Java-side, invisible to `./mvnw test`).
 
 ---
 
