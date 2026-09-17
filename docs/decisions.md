@@ -153,5 +153,5 @@ Entry template:
 ---
 
 ## Open TODOs
-- [X] Part 0: both services compile; first commit pushed to GitHub.
 - [ ] Part 1: docker-compose (Postgres, RabbitMQ), application.properties per service and profiles.
+- [ ] Part 1: scheduling's generated context-load test fails without Postgres/RabbitMQ; make it pass (or run with Testcontainers) once infrastructure exists.

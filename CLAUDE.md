@@ -86,7 +86,7 @@ cd notification && ./mvnw spring-boot:run
 ```
 
 ## Parts (progress)
-- [ ] 0. Setup: Initializr projects, repo, CLAUDE.md, docs/, push to GitHub
+- [X] 0. Setup: Initializr projects, repo, CLAUDE.md, docs/, push to GitHub
 - [ ] 1. Infrastructure: docker-compose, application.yml profiles, apps start and connect
 - [ ] 2. Domain & persistence: entities, repositories, Flyway, seed data
 - [ ] 3. Security: SecurityFilterChain, UserDetailsService, PasswordEncoder, @PreAuthorize, ownership
