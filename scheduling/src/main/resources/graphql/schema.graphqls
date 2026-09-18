@@ -1,0 +1,89 @@
+"""
+RFC 3339 timestamp with offset, e.g. 2026-09-25T14:00:00-03:00.
+Provided by graphql-java-extended-scalars (D-032).
+"""
+scalar DateTime
+
+type Query {
+    """
+    One appointment by id. Patients may only fetch their own.
+    Returns a NOT_FOUND error if the id does not exist.
+    """
+    appointment(id: ID!): Appointment
+
+    """
+    A patient's appointments, soonest first. DOCTOR and NURSE may query any
+    patient; PATIENT only their own id. With onlyFuture: true, only
+    appointments scheduled after now are returned.
+    """
+    appointmentsByPatient(patientId: ID!, onlyFuture: Boolean = false): [Appointment!]
+}
+
+type Mutation {
+    """
+    Schedules a new appointment with status SCHEDULED. DOCTOR and NURSE only.
+    """
+    createAppointment(input: CreateAppointmentInput!): Appointment
+
+    """
+    Changes a SCHEDULED appointment. Fields left out stay unchanged.
+    DOCTOR and NURSE only. Clinical notes are not editable here (D-031).
+    """
+    updateAppointment(id: ID!, input: UpdateAppointmentInput!): Appointment
+
+    """
+    Replaces the clinical notes of an appointment. DOCTOR only (D-031).
+    """
+    updateClinicalNotes(id: ID!, notes: String!): Appointment
+}
+
+type Appointment {
+    id: ID!
+    patient: Patient!
+    doctor: Doctor!
+    scheduledAt: DateTime!
+    status: AppointmentStatus!
+    reason: String
+    notes: String
+    createdAt: DateTime!
+    updatedAt: DateTime!
+}
+
+enum AppointmentStatus {
+    SCHEDULED
+    COMPLETED
+    CANCELLED
+}
+
+type Patient {
+    id: ID!
+    name: String!
+    email: String!
+    phone: String
+}
+
+"""
+A user with role DOCTOR. Exposes only public profile fields.
+"""
+type Doctor {
+    id: ID!
+    name: String!
+}
+
+input CreateAppointmentInput {
+    patientId: ID!
+    "Must reference a user with role DOCTOR."
+    doctorId: ID!
+    scheduledAt: DateTime!
+    "Up to 255 characters."
+    reason: String
+}
+
+input UpdateAppointmentInput {
+    "Must reference a user with role DOCTOR."
+    doctorId: ID
+    scheduledAt: DateTime
+    status: AppointmentStatus
+    "Up to 255 characters."
+    reason: String
+}

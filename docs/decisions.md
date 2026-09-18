@@ -389,6 +389,41 @@ Entry template:
 - Alternatives considered: rejecting the whole update with 403 when a nurse
   includes notes; silently ignoring notes from nurses.
 
+## D-032 — DateTime scalar from graphql-java-extended-scalars
+
+- **Status:** Accepted
+- **Part:** 4
+- **Decision:** Timestamps are exposed as `scalar DateTime` using
+  `ExtendedScalars.DateTime` (graphql-java-extended-scalars 24.0), registered
+  via a `RuntimeWiringConfigurer` in `config/GraphQlConfig`. A GraphQL test
+  round-trips a DateTime value to guard compatibility with graphql-java 25.0 (managed by Boot 4.1.1).
+- **Why:** Maps directly to the entities' `OffsetDateTime`, makes the schema
+  self-describing, and follows the scalars.graphql.org DateTime spec. The
+  library has no 25.x release yet; its README states 24.0+ supports 24.x and
+  above, and the test turns any incompatibility into a build failure instead of
+  a runtime surprise.
+- **Alternatives considered:** Hand-written `Coercing<OffsetDateTime, String>`
+  scalar (no dependency risk, but more code to own; fallback if the test
+  fails). ISO-8601 `String` (no setup, but loses type information and pushes
+  parsing into controllers).
+
+## D-033 — Load appointment associations with @EntityGraph
+
+- **Status:** Accepted
+- **Part:** 4
+- **Decision:** Repository methods that return appointments to the GraphQL layer
+  declare `@EntityGraph(attributePaths = {"patient", "doctor"})`, so both
+  associations are fetched in the same query, inside the service transaction.
+- **Why:** Open-in-view is off and services return detached entities, so any
+  lazy association a query selects must already be loaded. A fetch join per
+  query is the simplest way to guarantee that, avoids N+1 selects, and keeps
+  all data access inside the secured service layer (D-030).
+- **Alternatives considered:** `@BatchMapping` resolvers that load patients and
+  doctors in batches through a service method (more flexible if the schema
+  grows, but adds loaders and extra authorization surface for a two-field
+  need). Eager fetching on the entity (loads associations everywhere, including
+  the security path, even when unused).
+
 ---
 
 ## Open TODOs

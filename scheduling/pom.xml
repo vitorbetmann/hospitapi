@@ -125,6 +125,12 @@
             <artifactId>testcontainers-rabbitmq</artifactId>
             <scope>test</scope>
         </dependency>
+
+        <dependency>
+            <groupId>com.graphql-java</groupId>
+            <artifactId>graphql-java-extended-scalars</artifactId>
+            <version>24.0</version>
+        </dependency>
     </dependencies>
 
     <build>

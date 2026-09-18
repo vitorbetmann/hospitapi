@@ -48,7 +48,7 @@ class AppointmentServiceSecurityTest {
     @Test
     @WithUserDetails("patient")
     void patientCanListOwnAppointments() {
-        assertThat(appointmentService.listByPatient(1L))
+        assertThat(appointmentService.listByPatient(1L, false))
                 .extracting(Appointment::getId)
                 .containsExactlyInAnyOrder(1L, 2L);
     }
@@ -56,14 +56,14 @@ class AppointmentServiceSecurityTest {
     @Test
     @WithUserDetails("patient")
     void patientCannotListAnotherPatientsAppointments() {
-        assertThatThrownBy(() -> appointmentService.listByPatient(2L))
+        assertThatThrownBy(() -> appointmentService.listByPatient(2L, false))
                 .isInstanceOf(AccessDeniedException.class);
     }
 
     @Test
     @WithUserDetails("nurse")
     void nurseCanListAnyPatientsAppointments() {
-        assertThat(appointmentService.listByPatient(2L))
+        assertThat(appointmentService.listByPatient(2L, false))
                 .extracting(Appointment::getId)
                 .containsExactly(3L);
     }
