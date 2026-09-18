@@ -1,6 +1,7 @@
-package com.vitorbetmann.hospitapi.notification.messaging;
+package com.vitorbetmann.hospitapi.notification;
 
-import com.vitorbetmann.hospitapi.notification.TestcontainersConfiguration;
+import com.vitorbetmann.hospitapi.notification.messaging.AppointmentEvent;
+import com.vitorbetmann.hospitapi.notification.messaging.AppointmentEventType;
 import com.vitorbetmann.hospitapi.notification.reminder.ReminderSender;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
