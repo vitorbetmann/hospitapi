@@ -1,0 +1,126 @@
+package com.vitorbetmann.hospitapi.notification.messaging;
+
+import com.vitorbetmann.hospitapi.notification.TestcontainersConfiguration;
+import com.vitorbetmann.hospitapi.notification.reminder.ReminderSender;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.springframework.amqp.core.AmqpAdmin;
+import org.springframework.amqp.core.Message;
+import org.springframework.amqp.core.MessageProperties;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+
+import java.time.OffsetDateTime;
+import java.util.UUID;
+
+import static com.vitorbetmann.hospitapi.notification.config.MessagingConfig.APPOINTMENTS_EXCHANGE;
+import static com.vitorbetmann.hospitapi.notification.config.MessagingConfig.DEAD_LETTER_QUEUE;
+import static java.nio.charset.StandardCharsets.UTF_8;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.after;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.timeout;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+
+@SpringBootTest(properties = {
+        "spring.rabbitmq.listener.simple.retry.initial-interval=100ms",
+        "spring.rabbitmq.listener.simple.retry.max-interval=200ms"
+})
+@Import(TestcontainersConfiguration.class)
+class AppointmentEventListenerTest {
+
+    /** The header scheduling actually sends; notification has no such class. */
+    private static final String SCHEDULING_TYPE_ID =
+            "com.vitorbetmann.hospitapi.scheduling.messaging.AppointmentEvent";
+
+    private static final String EVENT_ID = "3f1c2a9e-7b4d-4e8a-9c1f-2d5e6a7b8c9d";
+
+    @Autowired RabbitTemplate rabbitTemplate;
+    @Autowired AmqpAdmin amqpAdmin;
+    @MockitoBean ReminderSender reminderSender;
+
+    @BeforeEach
+    void purgeDeadLetterQueue() {
+        amqpAdmin.purgeQueue(DEAD_LETTER_QUEUE);
+    }
+
+    @Test
+    void bindsByParameterTypeDespiteForeignTypeIdHeader() {
+        publish("appointment.created", eventJson("CREATED", "SCHEDULED", ""));
+
+        ArgumentCaptor<AppointmentEvent> captor = ArgumentCaptor.forClass(AppointmentEvent.class);
+        verify(reminderSender, timeout(5_000)).send(captor.capture());
+
+        AppointmentEvent event = captor.getValue();
+        assertThat(event.eventId()).isEqualTo(UUID.fromString(EVENT_ID));
+        assertThat(event.type()).isEqualTo(AppointmentEventType.CREATED);
+        assertThat(event.appointmentId()).isEqualTo(42L);
+        assertThat(event.patientEmail()).isEqualTo("ana@example.com");
+        assertThat(event.scheduledAt())
+                .isAtSameInstantAs(OffsetDateTime.parse("2026-09-20T14:00:00-03:00"));
+    }
+
+    @Test
+    void ignoresUnknownFields() {
+        publish("appointment.updated", eventJson("UPDATED", "SCHEDULED", "\"priority\": \"HIGH\","));
+
+        verify(reminderSender, timeout(5_000)).send(any());
+    }
+
+    @Test
+    void skipsNonScheduledStatusWithoutDeadLettering() {
+        publish("appointment.updated", eventJson("UPDATED", "CANCELLED", ""));
+
+        verify(reminderSender, after(1_000).never()).send(any());
+        assertThat(rabbitTemplate.receive(DEAD_LETTER_QUEUE, 500)).isNull();
+    }
+
+    @Test
+    void retriesThenDeadLettersWhenSendingFails() {
+        doThrow(new IllegalStateException("smtp down")).when(reminderSender).send(any());
+
+        publish("appointment.created", eventJson("CREATED", "SCHEDULED", ""));
+
+        Message deadLettered = rabbitTemplate.receive(DEAD_LETTER_QUEUE, 10_000);
+        assertThat(deadLettered).isNotNull();
+        verify(reminderSender, times(3)).send(any());
+    }
+
+    @Test
+    void deadLettersMalformedPayload() {
+        publish("appointment.created", "{ not json");
+
+        assertThat(rabbitTemplate.receive(DEAD_LETTER_QUEUE, 10_000)).isNotNull();
+        verify(reminderSender, never()).send(any());
+    }
+
+    private void publish(String routingKey, String json) {
+        MessageProperties props = new MessageProperties();
+        props.setContentType(MessageProperties.CONTENT_TYPE_JSON);
+        props.setHeader("__TypeId__", SCHEDULING_TYPE_ID);
+        rabbitTemplate.send(APPOINTMENTS_EXCHANGE, routingKey, new Message(json.getBytes(UTF_8), props));
+    }
+
+    private static String eventJson(String type, String status, String extraField) {
+        return """
+                {
+                  %s
+                  "eventId": "%s",
+                  "type": "%s",
+                  "appointmentId": 42,
+                  "status": "%s",
+                  "patientName": "Ana Souza",
+                  "patientEmail": "ana@example.com",
+                  "scheduledAt": "2026-09-20T14:00:00-03:00",
+                  "occurredAt": "2026-09-18T10:00:00-03:00"
+                }
+                """.formatted(extraField, EVENT_ID, type, status);
+    }
+}

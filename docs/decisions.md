@@ -481,4 +481,28 @@ Entry template:
   challenge-sized scope); publishing inside the transaction with
   channelTransacted (best-effort only, not atomic with the DB).
 
----
+D-037: Event contract is JSON field names; each service owns its copy of the type
+
+Status: Accepted
+Part: 5
+Decision: Notification defines its own AppointmentEvent record and enums, and binds by the @RabbitListener parameter type, ignoring scheduling's __TypeId__ header. Unknown JSON fields are tolerated. An unknown enum value fails and ends up in the DLQ.
+Why: The services are standalone Maven projects with no root pom. Sharing Java types would couple their builds and deployments. Field names are the actual contract, and tests pin it with raw JSON.
+Alternatives considered: A shared contract module, which needs a root pom or a published artifact. Consuming as Map/JsonNode, which gives up type safety. Configuring type-id mapping between the two class names, which keeps the coupling through class names.
+
+D-038: Notification is stateless; no event deduplication
+
+Status: Accepted
+Part: 5
+Decision: Notification has no database. It doesn't dedupe by eventId, so under at-least-once delivery a redelivered event can produce a duplicate reminder.
+Why: Reminders are logged or mocked, so a duplicate costs nothing. Real dedupe needs persistent storage (an in-memory set doesn't survive restarts or multiple instances), and adding Postgres and Flyway to notification isn't justified by the requirements.
+Alternatives considered: A processed-events table in notification's own database. A local appointments table that also serves as Part 6's data source. An in-memory set, rejected because it only looks like idempotency.
+Consequence: Part 6's scheduled job needs a data source. It will either query scheduling or be covered by a decision that supersedes this one.
+
+D-039: Consumer declares the shared exchange and owns its queue, DLX and DLQ
+
+Status: Accepted
+Part: 5
+Decision: Notification declares hospitapi.appointments with the same type and durability as scheduling. It also declares its own notification.appointment-events queue, the notification.dlx direct exchange, and the notification.appointment-events.dlq queue. Retries use spring.rabbitmq.listener.simple.retry.* with Boot's default reject-without-requeue recoverer.
+Why: Declarations are idempotent, and binding to a missing exchange fails, so either service can start first. Each consumer owns its failure handling.
+Alternatives considered: Declaring the exchange only in scheduling and requiring startup order in compose and the README. A shared DLX for all consumers.
+
