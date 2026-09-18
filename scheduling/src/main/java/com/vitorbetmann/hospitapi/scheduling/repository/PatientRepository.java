@@ -1,6 +1,6 @@
-package repository;
+package com.vitorbetmann.hospitapi.scheduling.repository;
 
-import domain.Patient;
+import com.vitorbetmann.hospitapi.scheduling.domain.Patient;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface PatientRepository extends JpaRepository<Patient, Long> {

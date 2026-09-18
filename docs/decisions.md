@@ -341,6 +341,54 @@ Entry template:
   Flyway's version history, conflicts with D-009); a `@Profile("dev")` seeder
   bean (Java-side, invisible to `./mvnw test`).
 
+### D-028 Custom UserDetails principal
+
+- Status: Accepted
+- Part: 3
+- Decision: A `SecurityUser` record implementing `UserDetails` carries
+  userId, role, and patientId; `UserDetailsService` builds it from `User`.
+- Why: Ownership checks read patientId from the principal instead of
+  re-querying the user on every request.
+- Alternatives considered: Spring's built-in `User.withUsername(...)` plus
+  a lookup by username whenever ownership matters.
+
+### D-029 Stateless HTTP Basic, CSRF disabled
+
+- Status: Accepted
+- Part: 3
+- Decision: `SessionCreationPolicy.STATELESS`, CSRF disabled.
+- Why: Credentials travel with every request and no session cookie exists,
+  so there is nothing for CSRF to protect. Keeping CSRF would make every
+  GraphQL POST from Postman fail with 403.
+- Alternatives considered: CSRF with `CookieCsrfTokenRepository`.
+
+### D-030 Authorization lives in the service layer
+
+- Status: Accepted
+- Part: 3
+- Decision: Role checks use `@PreAuthorize` on service methods; the patient
+  ownership check is programmatic, inside the transactional service method.
+  URL rules only distinguish public health from authenticated.
+- Why: `/graphql` is one URL, so URL rules can't express D-004. Putting the
+  checks on services enforces them for every caller, not just resolvers.
+  Checking ownership inside the transaction avoids lazy-loading outside it,
+  which `@PostAuthorize` on an entity would risk.
+- Alternatives considered: `@PreAuthorize` on resolvers; `@PostAuthorize`
+  with SpEL on the returned entity.
+
+### D-031 Clinical notes edited through a dedicated doctor-only mutation
+
+- Status: Accepted
+- Part: 3
+- Decision: `notes` is excluded from `CreateAppointmentInput` and
+  `UpdateAppointmentInput`; it changes only through `updateClinicalNotes`,
+  whose service method is `@PreAuthorize("hasRole('DOCTOR')")`.
+- Why: Enforces D-004's "only DOCTOR edits clinical notes" with plain method
+  security instead of field-level checks, avoids the omitted-vs-null
+  ambiguity of GraphQL input fields, and makes the rule visible in the schema.
+- Alternatives considered: rejecting the whole update with 403 when a nurse
+  includes notes; silently ignoring notes from nurses.
+
 ---
 
 ## Open TODOs
