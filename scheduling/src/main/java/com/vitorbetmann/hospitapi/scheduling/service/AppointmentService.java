@@ -5,12 +5,15 @@ import com.vitorbetmann.hospitapi.scheduling.domain.AppointmentStatus;
 import com.vitorbetmann.hospitapi.scheduling.domain.Patient;
 import com.vitorbetmann.hospitapi.scheduling.domain.Role;
 import com.vitorbetmann.hospitapi.scheduling.domain.User;
+import com.vitorbetmann.hospitapi.scheduling.messaging.AppointmentEvent;
+import com.vitorbetmann.hospitapi.scheduling.messaging.AppointmentEventType;
 import com.vitorbetmann.hospitapi.scheduling.repository.AppointmentRepository;
 import com.vitorbetmann.hospitapi.scheduling.repository.PatientRepository;
 import com.vitorbetmann.hospitapi.scheduling.repository.UserRepository;
 import com.vitorbetmann.hospitapi.scheduling.security.CurrentUser;
 import com.vitorbetmann.hospitapi.scheduling.security.SecurityUser;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
@@ -28,9 +31,13 @@ public class AppointmentService {
     private static final int NOTES_MAX_LENGTH = 2000;
 
     private final AppointmentRepository appointmentRepository;
+
     private final PatientRepository patientRepository;
     private final UserRepository userRepository;
+
+    private final ApplicationEventPublisher eventPublisher;
     private final Clock clock;
+
 
     @PreAuthorize("isAuthenticated()")
     @Transactional(readOnly = true)
@@ -60,7 +67,10 @@ public class AppointmentService {
         appointment.setScheduledAt(input.scheduledAt());
         appointment.setReason(requireMaxLength("reason", input.reason(), REASON_MAX_LENGTH));
         appointment.setStatus(AppointmentStatus.SCHEDULED);
-        return appointmentRepository.save(appointment);
+
+        Appointment saved = appointmentRepository.save(appointment);
+        eventPublisher.publishEvent(AppointmentEvent.of(AppointmentEventType.CREATED, saved, clock));
+        return saved;
     }
 
     @PreAuthorize("hasAnyRole('DOCTOR', 'NURSE')")
@@ -82,6 +92,8 @@ public class AppointmentService {
         if (input.reason() != null) {
             appointment.setReason(requireMaxLength("reason", input.reason(), REASON_MAX_LENGTH));
         }
+
+        eventPublisher.publishEvent(AppointmentEvent.of(AppointmentEventType.UPDATED, appointment, clock));
         return appointment;
     }
 

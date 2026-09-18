@@ -10,13 +10,14 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 
 /**
- * Full application context backed by Testcontainers and a shifted test Clock.
+ * Full application context backed by Testcontainers, a shifted test Clock,
+ * and a test queue bound to the appointments exchange.
  * Every integration test uses this so they all share one cached context.
  */
 @Target(ElementType.TYPE)
 @Retention(RetentionPolicy.RUNTIME)
 @SpringBootTest
 @AutoConfigureGraphQlTester
-@Import({TestcontainersConfiguration.class, TestClockConfiguration.class})
+@Import({TestcontainersConfiguration.class, TestClockConfiguration.class, TestMessagingConfiguration.class})
 @interface IntegrationTest {
 }

@@ -458,9 +458,27 @@ Entry template:
   containers and slows the suite).
   Relaxing assertions to `contains` (weaker tests).
 
+### D-036 Appointment events are published after commit via a transactional event listener
+
+- Status: Accepted
+- Part: 5
+- Decision: AppointmentService builds an immutable AppointmentEvent inside the
+  transaction and publishes it with ApplicationEventPublisher. A
+  @TransactionalEventListener (phase = AFTER_COMMIT) in AppointmentEventPublisher
+  sends it to the `hospitapi.appointments` topic exchange; any send failure is
+  caught (RuntimeException) and logged with the event and appointment IDs,
+  never rethrown. The event carries `status` so consumers can tell a
+  cancellation from a reschedule. Clinical-note edits (`updateClinicalNotes`)
+  publish no event, and the event never carries notes.
+- Why: Consumers never see an appointment that was rolled back, and RabbitMQ
+  code stays out of the service. The payload is built inside the transaction
+  because the listener runs after the persistence context closes (lazy
+  `patient` would fail). Accepted trade-off: if the broker is unreachable
+  right after commit, the event is lost; documented in the README.
+- Alternatives considered: manual TransactionSynchronization registration (same semantics, more plumbing in the
+  service); transactional outbox table
+  plus relay (no loss window, but a table, poller and dedupe for a
+  challenge-sized scope); publishing inside the transaction with
+  channelTransacted (best-effort only, not atomic with the DB).
+
 ---
-
-## Open TODOs
-
-- [ ] Part 2: entities, repositories, `V1__init.sql`, seed users (one per
-  role) and sample appointments.

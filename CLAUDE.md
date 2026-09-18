@@ -11,7 +11,7 @@ root `compose.yaml`.
 
 - `scheduling/` (artifact `hospitapi-scheduling`): Spring Security (HTTP Basic,
   DB-backed users), Spring for GraphQL, JPA + PostgreSQL, Flyway. Publishes
-  appointment events to RabbitMQ after the transaction commits.
+  appointment events to RabbitMQ after the transaction commits (D-036).
 - `notification/` (artifact `hospitapi-notification`): consumes appointment
   events and logs/mocks reminders. Optional `@Scheduled` job for appointments
   in the next 24h.
@@ -37,7 +37,8 @@ root `compose.yaml`.
 
 - Jackson 3 is the default: packages are `tools.jackson.*`, not
   `com.fasterxml.jackson.*` (annotations stay in `com.fasterxml.jackson.annotation`).
-  Don't use Jackson 2-specific classes such as `Jackson2JsonMessageConverter`.
+  Don't use Jackson 2-specific classes such as `Jackson2JsonMessageConverter`;
+  the AMQP converter is `JacksonJsonMessageConverter` (see Messaging).
 - Starters are modular: most technologies have a dedicated starter plus a
   matching `spring-boot-starter-*-test` companion. Add the test starter for
   the slice being tested (e.g. `spring-boot-starter-data-jpa-test`); a missing
@@ -81,6 +82,9 @@ root `compose.yaml`.
   is pinned at 24.0 (no 25.x release yet, D-032). `dependency:tree` shows
   graphql-java under extended-scalars only because Maven prints each artifact
   once, at the first path it reaches.
+- **RabbitMQ 4.3+** rejects non-durable, non-exclusive queues (`transient_nonexcl_queues` is denied by default). The
+  `rabbitmq:4-management-alpine` tag floats across 4.x, which is how 4.3
+  arrived without any change in this repo.
 
 ## Domain (Part 2, authoritative)
 
@@ -90,8 +94,9 @@ root `compose.yaml`.
 - Appointment: id, patient (@ManyToOne), doctor (@ManyToOne User),
   scheduledAt, status (SCHEDULED | COMPLETED | CANCELLED), reason, notes,
   createdAt, updatedAt
-- AppointmentEvent: eventId, type (CREATED | UPDATED), appointmentId,
-  patientName, patientEmail, scheduledAt, occurredAt
+- AppointmentEvent (record, `messaging/`): eventId, type (CREATED | UPDATED),
+  appointmentId, status, patientName, patientEmail, scheduledAt, occurredAt.
+  `status` lets consumers tell a cancellation or completion from a reschedule.
 - Doctors are `User` rows; `Patient` is the only party with contact details (D-026).
 
 ## Schema conventions (Part 2)
@@ -176,14 +181,51 @@ root `compose.yaml`.
   is off, so any association a query selects must already be loaded.
 - `updateAppointment`: absent and `null` fields both mean "unchanged" (fields
   can't be cleared), and only `SCHEDULED` appointments can be updated.
-  `updateClinicalNotes` works in any status. Updates rely on dirty checking,
-  with no `save()`.
+  `updateClinicalNotes` works in any status. `create` calls `save()` (IDENTITY
+  keys insert immediately, so the id is available for the event); updates
+  rely on dirty checking, with no `save()`.
 - Error classifications (Spring GraphQL's `ErrorType`), mapped in
   `api/GraphQlExceptionResolver`:
     - `AppointmentNotFoundException` → `NOT_FOUND`
     - `InvalidAppointmentException` → `BAD_REQUEST`
     - `AccessDeniedException` falls through to Spring GraphQL's security
       resolver → `FORBIDDEN` (`UNAUTHORIZED` when there is no authenticated user)
+
+## Messaging (Part 5)
+
+- Exchange: durable topic exchange `hospitapi.appointments`, declared in
+  scheduling's `config/MessagingConfig` (`MessagingConfig.APPOINTMENTS_EXCHANGE`,
+  public so `messaging/` can read it). Routing keys `appointment.created` and
+  `appointment.updated` live on `AppointmentEventType.routingKey()`.
+- Scheduling declares only the exchange. Consumers declare their own queues
+  and bindings; the producer never knows its consumers.
+- Publishing after commit (D-036): `AppointmentService` builds
+  `AppointmentEvent.of(type, appointment, clock)` inside the `@Transactional`
+  method and publishes it with `ApplicationEventPublisher`.
+  `AppointmentEventPublisher` (`@TransactionalEventListener(phase = AFTER_COMMIT)`)
+  is the only class that touches `RabbitTemplate`.
+- The listener runs after the persistence context has closed, so it must never
+  touch entity associations. Everything a consumer needs goes into the event.
+- The listener never throws: it catches `RuntimeException` and logs event type,
+  eventId and appointmentId. A failed send after commit loses the event; this
+  is the accepted trade-off in D-036.
+- `create` publishes CREATED, `update` publishes UPDATED (also when the status
+  changes to COMPLETED or CANCELLED). `updateClinicalNotes` publishes nothing,
+  and the event never carries `notes`.
+- Message converter: `JacksonJsonMessageConverter` built from Boot's
+  `JsonMapper` (`tools.jackson.databind.json.JsonMapper`), declared in
+  `MessagingConfig`. Boot applies it to `RabbitTemplate` and listener
+  containers only if the bean type is
+  `org.springframework.amqp.support.converter.MessageConverter`.
+  `org.springframework.messaging.converter` has same-name classes (`MessageConverter`, `JacksonJsonMessageConverter`)
+  that compile but are
+  silently ignored; the symptom is `SimpleMessageConverter only supports
+  String, byte[] and Serializable payloads`.
+- Declare every queue durable, including test queues (RabbitMQ 4.3+, see
+  Version notes).
+- Spring swallows exceptions from after-commit listeners and logs only
+  `TransactionSynchronization.afterCompletion threw exception`, followed by
+  the stack trace. When an event doesn't arrive, read the log, not the assertion.
 
 ## Conventions
 
@@ -192,7 +234,8 @@ root `compose.yaml`.
 - Layering per service: `api` (GraphQL controllers and the GraphQL exception
   resolver), `service` (services, GraphQL input records, service exceptions),
   `domain`, `repository`, `config` (all `@Configuration` classes), `security`
-  (principal, user loading, `CurrentUser`), `messaging`.
+  (principal, user loading, `CurrentUser`), `messaging` (events, event types,
+  publishers and listeners).
 - GraphQL controllers are one-line delegations to services.
 - Constructor injection only (no field `@Autowired`).
 - Code that needs "now" uses the injected `Clock` bean (`config/GraphQlConfig`,
@@ -205,7 +248,9 @@ root `compose.yaml`.
 - Watch for same-name imports: `AccessDeniedException` comes from
   `org.springframework.security.access` (not `java.nio.file`); `User` in
   application code is the domain entity, not
-  `org.springframework.security.core.userdetails.User`.
+  `org.springframework.security.core.userdetails.User`; AMQP converter types
+  come from `org.springframework.amqp.support.converter`, not
+  `org.springframework.messaging.converter`.
 - Schema changes go through Flyway migrations only (`ddl-auto=validate`).
   Never edit a migration that has already been applied; add a new one.
 - Never create scratch or hand-made tables in the `hospitapi` database.
@@ -271,7 +316,8 @@ RabbitMQ management UI: `localhost:15672`.
 
 - Every integration test class is annotated `@IntegrationTest`, a
   meta-annotation bundling `@SpringBootTest`, `@AutoConfigureGraphQlTester`
-  and `@Import({TestcontainersConfiguration.class, TestClockConfiguration.class})`.
+  and `@Import({TestcontainersConfiguration.class, TestClockConfiguration.class,
+  TestMessagingConfiguration.class})`.
   Never use a bare `@SpringBootTest` + `@Import`: all classes must have the
   identical configuration to share one cached context, and with it one pair
   of containers per test run.
@@ -283,14 +329,16 @@ RabbitMQ management UI: `localhost:15672`.
 - To check sharing: the Spring Boot banner appears once per `./mvnw test`
   run. For cache statistics, temporarily set
   `logging.level.org.springframework.test.context.cache=DEBUG`.
-- `@IntegrationTest`, `TestcontainersConfiguration` and
-  `TestClockConfiguration` are package-private, so integration tests live in
-  the root test package `com.vitorbetmann.hospitapi.scheduling`.
+- `@IntegrationTest`, `TestcontainersConfiguration`, `TestClockConfiguration`
+  and `TestMessagingConfiguration` are package-private, so integration tests
+  live in the root test package `com.vitorbetmann.hospitapi.scheduling`.
 
 ### Integration tests: data and time (D-035)
 
 - No `@Transactional` on integration tests. A test transaction keeps entities
-  managed during assertions and hides lazy-loading bugs (D-033).
+  managed during assertions and hides lazy-loading bugs (D-033). It would
+  also roll back instead of committing, so no after-commit event would ever
+  be sent.
 - Seeded rows are read-only in tests. Data created by tests belongs to test
   patient 900, inserted by `src/test/resources/sql/test-patient.sql` via
   `@Sql(scripts = "/sql/test-patient.sql", executionPhase = Sql.ExecutionPhase.BEFORE_TEST_CLASS)`.
@@ -323,6 +371,26 @@ RabbitMQ management UI: `localhost:15672`.
 - To decode lists that may be empty, map the root field to a small record (`entityList(IdOnly.class)`) instead of a
   `[*]` JSON path.
 
+### Messaging tests (Part 5)
+
+- `TestMessagingConfiguration` declares the durable queue
+  `test.appointment-events` (`TEST_QUEUE`), bound to the real
+  `hospitapi.appointments` exchange with `appointment.#`. Because the context
+  is shared, events from every integration test class land in it.
+- Purge it in `@BeforeEach` with `amqpAdmin.purgeQueue(TEST_QUEUE, false)`,
+  and again after setup steps that publish (e.g. the `create` before an
+  `update` test), so only the event under test is received.
+- Receive with `rabbitTemplate.receiveAndConvert(TEST_QUEUE, 5000,
+  new ParameterizedTypeReference<AppointmentEvent>() {})`. Short timeouts (500–1000 ms) with `receive(...)` returning
+  `null` prove absence.
+- Prove after-commit with `TransactionTemplate`: call the service inside
+  `executeWithoutResult` (its `@Transactional` joins the outer transaction),
+  assert the queue is still empty, then assert the event after the template
+  commits. `tx.setRollbackOnly()` proves a rollback publishes nothing.
+- "Nothing arrived" tests only mean something while the positive tests pass.
+- Compare event timestamps by instant: `event.occurredAt().toInstant()`
+  against `clock.instant()`.
+
 ## Parts (progress)
 
 - [x] 
@@ -337,7 +405,9 @@ RabbitMQ management UI: `localhost:15672`.
     4. GraphQL: schema, queries/mutations, onlyFuture filter, error handling, notes via
        `updateClinicalNotes` (D-031), GraphQL integration tests (D-034, D-035)
 - [ ] 
-    5. Messaging: exchange/queue/binding, publish after commit, consumer, retries/DLQ
+    5. Messaging: exchange, publish after commit (D-036) and publishing tests
+       are done in scheduling. Pending in notification: queue and binding,
+       consumer, retries/DLQ, consumer tests
 - [ ] 
     6. Scheduled reminders (extra)
 - [ ] 
@@ -347,7 +417,7 @@ RabbitMQ management UI: `localhost:15672`.
 - [ ] 
     8. Deliverables: Dockerfiles and app services in `compose.yaml` for one-command startup, revisit health-detail
        exposure (D-020; consider `management.endpoint.health.roles=DOCTOR,NURSE`), README (architecture, how to run,
-       schema, example operations, credentials, access rules, stateless/CSRF-off design), Postman collection per role
-       incl. denials
+       schema, example operations, credentials, access rules, stateless/CSRF-off design, D-036 event-loss
+       trade-off), Postman collection per role incl. denials
 - [ ] 
     9. (Optional) Extract the `history/` service
