@@ -424,6 +424,40 @@ Entry template:
   need). Eager fetching on the entity (loads associations everywhere, including
   the security path, even when unused).
 
+## D-034 — GraphQL integration tests on the full context via ExecutionGraphQlServiceTester
+
+- **Status:** Accepted
+- **Part:** 4
+- **Decision:** GraphQL behavior is tested with `@SpringBootTest` plus
+  `ExecutionGraphQlServiceTester`, against the real schema, controllers,
+  service security and Testcontainers database, authenticating with
+  `@WithUserDetails` against the seeded users. All integration test classes
+  use the `@IntegrationTest` meta-annotation so they share one cached context.
+- **Why:** Authorization lives in the service layer (`@PreAuthorize` and the
+  ownership check via `SecurityUser`), so only a context with real services
+  and real principals can prove it. Sharing one context keeps a single pair of
+  containers per test run.
+- **Alternatives considered:** `@GraphQlTest` slice with a mocked service (fast,
+  but `@PreAuthorize` and ownership never run, so authorization tests pass
+  trivially). `HttpGraphQlTester` with HTTP Basic (also covers the filter chain,
+  but in Boot 4 needs WebTestClient; filter-chain coverage is planned for Part 7).
+
+## D-035 — Integration tests commit; test data is isolated by owner, not rollback
+
+- **Status:** Accepted
+- **Part:** 4
+- **Decision:** Integration tests are not `@Transactional`. Seeded rows are only
+  read; data created by tests belongs to a test-only patient (id 900) inserted
+  by `src/test/resources/sql/test-patient.sql` through `@Sql` before the class.
+- **Why:** A test transaction keeps entities managed during assertions, which
+  hides lazy-loading failures that D-033 guards against. With one shared
+  context, owner-based isolation keeps exact-list assertions on seeded patients
+  valid regardless of test class order.
+- **Alternatives considered:** `@Transactional` rollback per test (masks
+  detached-entity bugs). `@DirtiesContext` or a separate context per class (fresh database each time, but restarts
+  containers and slows the suite).
+  Relaxing assertions to `contains` (weaker tests).
+
 ---
 
 ## Open TODOs

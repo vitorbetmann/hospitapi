@@ -51,6 +51,10 @@ root `compose.yaml`.
   `@AutoConfigureMockMvc`); `@MockBean` is gone (use Spring Framework 7's
   `@MockitoBean`); `MockitoTestExecutionListener` was removed, so plain
   `@Mock`/`@Captor` need Mockito's own `MockitoExtension`.
+- GraphQL test annotations moved to
+  `org.springframework.boot.graphql.test.autoconfigure.tester`
+  (e.g. `AutoConfigureGraphQlTester`). The HTTP GraphQL tester is built on
+  `WebTestClient`, so it needs WebFlux on the test classpath.
 - Spring Framework 7, Spring Security 7, Jakarta EE 11, JSpecify null-safety
   annotations.
 - Spring Security 7 accepts only the lambda DSL; `.and()` chaining is gone.
@@ -73,6 +77,10 @@ root `compose.yaml`.
   Versions come from Boot's dependency management; never pin them.
 - **JUnit 6.0.3**, not JUnit 5. Everyday annotations are unchanged, but
   suspect this first when a snippet from a tutorial won't compile.
+- **graphql-java 25.0** is managed by Boot. `graphql-java-extended-scalars`
+  is pinned at 24.0 (no 25.x release yet, D-032). `dependency:tree` shows
+  graphql-java under extended-scalars only because Maven prints each artifact
+  once, at the first path it reaches.
 
 ## Domain (Part 2, authoritative)
 
@@ -98,16 +106,18 @@ root `compose.yaml`.
 - Schema and seed data live in separate migrations. Seed rows use explicit IDs (`overriding system value`) followed by
   `alter column id restart with 100`
   (D-027).
+- Seed appointment dates are relative to migration time (`now() ± interval`),
+  not fixed dates. Tests account for this (see Testing).
 - Migration filenames use a double underscore: `V3__description.sql`. A single
   underscore is not a versioned migration.
 
 ## Access rules
 
 - DOCTOR and NURSE: create, update, and view appointments.
-- Only DOCTOR edits clinical `notes`. How this is enforced (dedicated
-  doctor-only mutation vs. rejecting nurse updates that include notes) is
-  decided in Part 4 as D-031.
-- PATIENT: views only their own appointments.
+- Only DOCTOR edits clinical `notes`, through the dedicated
+  `updateClinicalNotes` mutation (D-031). `notes` is not part of the create or
+  update inputs.
+- PATIENT: views only their own appointments (including their `notes`).
 - All authorization lives in the service layer (D-030); see Security below.
 - These rules resolve an ambiguity in the brief and must be documented in the README.
 
@@ -135,22 +145,58 @@ root `compose.yaml`.
 - Password encoder: `PasswordEncoderFactories.createDelegatingPasswordEncoder()`.
   Stored hashes must carry the `{bcrypt}` prefix. Rotating a seeded password
   means a new migration with an `update`, never an edit to V2.
-- Seeded users: `doctor`/`doctor123`, `nurse`/`nurse123`,
-  `patient`/`patient123` (linked to patient 1). Appointment 3 belongs to
+- Seeded users: `doctor`/`doctor123` (user id 1), `nurse`/`nurse123`
+  (user id 2), `patient`/`patient123` (user id 3, linked to patient 1).
+  Appointments 1 and 2 belong to patient 1; appointment 3 belongs to
   patient 2, which gives a ready-made ownership denial for user `patient`.
 - Health: anonymous callers see only `{"status":"UP"}`; any authenticated
   user sees component details (`show-details=when-authorized`, D-020). A
   wrong password returns 401 even on `permitAll` paths, because the Basic
   filter rejects bad credentials before authorization runs.
 
+## GraphQL (Part 4)
+
+- The schema lives at `src/main/resources/graphql/*.graphqls`. The `.graphqls`
+  extension is required; with any other extension Boot silently skips GraphQL.
+- After schema or controller changes, check the startup "GraphQL schema
+  inspection" report for unmapped fields or controller methods.
+- Operations: queries `appointment(id)` and
+  `appointmentsByPatient(patientId, onlyFuture = false)`; mutations
+  `createAppointment`, `updateAppointment(id, input)`,
+  `updateClinicalNotes(id, notes)`. No queries beyond the brief (no
+  `patients`, `doctors`, `myAppointments`).
+- Root fields are nullable, so an error on one field doesn't wipe out `data`.
+- `scalar DateTime` comes from `ExtendedScalars.DateTime`, registered with a
+  `RuntimeWiringConfigurer` in `config/GraphQlConfig` (D-032). A round-trip
+  test guards compatibility with graphql-java 25.0.
+- The `Doctor` GraphQL type (`id`, `name`) is backed by the `User` entity and
+  resolves through getters, with no `@SchemaMapping`.
+- Repository methods returning appointments to GraphQL declare
+  `@EntityGraph(attributePaths = {"patient", "doctor"})` (D-033). Open-in-view
+  is off, so any association a query selects must already be loaded.
+- `updateAppointment`: absent and `null` fields both mean "unchanged" (fields
+  can't be cleared), and only `SCHEDULED` appointments can be updated.
+  `updateClinicalNotes` works in any status. Updates rely on dirty checking,
+  with no `save()`.
+- Error classifications (Spring GraphQL's `ErrorType`), mapped in
+  `api/GraphQlExceptionResolver`:
+    - `AppointmentNotFoundException` → `NOT_FOUND`
+    - `InvalidAppointmentException` → `BAD_REQUEST`
+    - `AccessDeniedException` falls through to Spring GraphQL's security
+      resolver → `FORBIDDEN` (`UNAUTHORIZED` when there is no authenticated user)
+
 ## Conventions
 
 - Code, identifiers, comments, and commits in English. The README may be in Portuguese.
 - Conventional Commits (`feat:`, `fix:`, `chore:`, `docs:`, `test:`, `refactor:`).
-- Layering per service: `api` (GraphQL controllers), `service`, `domain`,
-  `repository`, `config` (all `@Configuration` classes), `security`
+- Layering per service: `api` (GraphQL controllers and the GraphQL exception
+  resolver), `service` (services, GraphQL input records, service exceptions),
+  `domain`, `repository`, `config` (all `@Configuration` classes), `security`
   (principal, user loading, `CurrentUser`), `messaging`.
+- GraphQL controllers are one-line delegations to services.
 - Constructor injection only (no field `@Autowired`).
+- Code that needs "now" uses the injected `Clock` bean (`config/GraphQlConfig`,
+  `Clock.systemUTC()`), never `Instant.now()` or `OffsetDateTime.now()`.
 - `@Transactional` comes from `org.springframework.transaction.annotation`,
   never `jakarta.transaction` (which lacks `readOnly`). Read-only service
   methods use `@Transactional(readOnly = true)`.
@@ -199,6 +245,7 @@ curl localhost:8080/actuator/health                       # {"status":"UP"} only
 curl -u doctor:doctor123 localhost:8080/actuator/health   # details: db + rabbit UP
 curl localhost:8081/actuator/health         # rabbit UP (no db, no security by design)
 ./mvnw test                                 # inside a service folder; Docker, no compose
+./mvnw clean test                           # after moving/renaming test resources (drops stale copies in target/)
 ./mvnw spring-boot:test-run                 # run against throwaway containers
 ```
 
@@ -219,14 +266,62 @@ RabbitMQ management UI: `localhost:15672`.
   would force dialect-neutral migrations and test a database we don't ship.
 - Unit tests (services, authorization rules) use plain JUnit + Mockito with no
   containers. `@Mock` needs `@ExtendWith(MockitoExtension.class)` in Boot 4.
-- `TestcontainersConfiguration` is package-private; classes importing it must
-  live in the same package.
-- Security integration tests use `@SpringBootTest` with
-  `@WithUserDetails("doctor" | "nurse" | "patient")`, which loads the seeded
-  users through the real `DatabaseUserDetailsService`. Calls without a user
-  fail with `AuthenticationCredentialsNotFoundException`.
-- No shared integration-test base class yet (one `@Import` per test class).
-  Extract one in Part 7 if duplication or shared setup makes it worthwhile.
+
+### Integration tests: one shared context (D-034)
+
+- Every integration test class is annotated `@IntegrationTest`, a
+  meta-annotation bundling `@SpringBootTest`, `@AutoConfigureGraphQlTester`
+  and `@Import({TestcontainersConfiguration.class, TestClockConfiguration.class})`.
+  Never use a bare `@SpringBootTest` + `@Import`: all classes must have the
+  identical configuration to share one cached context, and with it one pair
+  of containers per test run.
+- Per-class `@MockitoBean`, `@MockitoSpyBean`, `@ActiveProfiles`,
+  `@TestPropertySource`, `@AutoConfigure...` or `@DirtiesContext` change the
+  context cache key and start a new context with new containers. Avoid them in
+  integration tests; if something is needed everywhere, add it to
+  `@IntegrationTest`.
+- To check sharing: the Spring Boot banner appears once per `./mvnw test`
+  run. For cache statistics, temporarily set
+  `logging.level.org.springframework.test.context.cache=DEBUG`.
+- `@IntegrationTest`, `TestcontainersConfiguration` and
+  `TestClockConfiguration` are package-private, so integration tests live in
+  the root test package `com.vitorbetmann.hospitapi.scheduling`.
+
+### Integration tests: data and time (D-035)
+
+- No `@Transactional` on integration tests. A test transaction keeps entities
+  managed during assertions and hides lazy-loading bugs (D-033).
+- Seeded rows are read-only in tests. Data created by tests belongs to test
+  patient 900, inserted by `src/test/resources/sql/test-patient.sql` via
+  `@Sql(scripts = "/sql/test-patient.sql", executionPhase = Sql.ExecutionPhase.BEFORE_TEST_CLASS)`.
+  The script is idempotent (`on conflict do nothing`).
+- Test fixtures live in `src/test/resources/sql/`. `@Sql` paths are relative
+  to the classpath root, so `/sql/x.sql` must be at
+  `src/test/resources/sql/x.sql`.
+- `TestClockConfiguration` provides a `@Primary` bean named `testClock`, fixed
+  at test start + 1 day. Seed dates are relative to migration time, so in
+  tests appointment 3 (+20h) is in the past and appointment 1 (+3d) in the
+  future; this proves services use the injected `Clock`. The bean name must
+  differ from the application's `clock` bean (bean overriding is off).
+
+### Security and GraphQL tests
+
+- `@WithUserDetails("doctor" | "nurse" | "patient")` loads the seeded users
+  through the real `DatabaseUserDetailsService`. Service calls without a user
+  throw `AuthenticationCredentialsNotFoundException`; through GraphQL they
+  surface as `UNAUTHORIZED`.
+- GraphQL tests use `ExecutionGraphQlServiceTester` (in-process, no HTTP; the
+  filter chain is covered by the Part 7 MockMvc test).
+- Assert `.errors()` before `.path(...)`: `GraphQlTester` fails a test whose
+  response has errors that were never checked. Error tests also check that
+  the root field is `null`.
+- Compare `DateTime` values by instant (`isAtSameInstantAs`), never as
+  strings: Postgres stores UTC, so a reloaded value's offset may differ.
+- Write `DateTime` test values as string literals with explicit seconds (`2030-01-15T10:30:00-03:00`);
+  `OffsetDateTime.toString()` drops `:00`
+  seconds, which RFC 3339 requires.
+- To decode lists that may be empty, map the root field to a small record (`entityList(IdOnly.class)`) instead of a
+  `[*]` JSON path.
 
 ## Parts (progress)
 
@@ -238,17 +333,17 @@ RabbitMQ management UI: `localhost:15672`.
     2. Domain & persistence: entities, repositories, Flyway, seed data
 - [x] 
     3. Security: SecurityFilterChain, UserDetailsService, PasswordEncoder, @PreAuthorize, ownership
-- [ ] 
-    4. GraphQL: schema, queries/mutations, onlyFuture filter, error handling. Decide
-       notes enforcement (D-031); role-restricted `@PreAuthorize` on create/update;
-       map `AppointmentNotFoundException` to GraphQL `NOT_FOUND`
+- [x] 
+    4. GraphQL: schema, queries/mutations, onlyFuture filter, error handling, notes via
+       `updateClinicalNotes` (D-031), GraphQL integration tests (D-034, D-035)
 - [ ] 
     5. Messaging: exchange/queue/binding, publish after commit, consumer, retries/DLQ
 - [ ] 
     6. Scheduled reminders (extra)
 - [ ] 
-    7. Tests: unit + Testcontainers integration (GraphQL, RabbitMQ), MockMvc
-       filter-chain test (health public, everything else 401)
+    7. Tests: unit tests, Testcontainers RabbitMQ integration, MockMvc
+       filter-chain test (health public, everything else 401). GraphQL
+       integration tests were done in Part 4.
 - [ ] 
     8. Deliverables: Dockerfiles and app services in `compose.yaml` for one-command startup, revisit health-detail
        exposure (D-020; consider `management.endpoint.health.roles=DOCTOR,NURSE`), README (architecture, how to run,

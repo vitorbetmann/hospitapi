@@ -4,8 +4,6 @@ import com.vitorbetmann.hospitapi.scheduling.domain.Appointment;
 import com.vitorbetmann.hospitapi.scheduling.service.AppointmentService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Import;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.AuthenticationCredentialsNotFoundException;
 import org.springframework.security.test.context.support.WithUserDetails;
@@ -13,8 +11,7 @@ import org.springframework.security.test.context.support.WithUserDetails;
 import static org.assertj.core.api.Assertions.*;
 
 
-@SpringBootTest
-@Import(TestcontainersConfiguration.class)
+@IntegrationTest
 class AppointmentServiceSecurityTest {
 
     @Autowired
