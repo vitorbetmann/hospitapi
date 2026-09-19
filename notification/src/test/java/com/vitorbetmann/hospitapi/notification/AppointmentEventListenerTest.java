@@ -37,15 +37,20 @@ import static org.mockito.Mockito.verify;
 @Import(TestcontainersConfiguration.class)
 class AppointmentEventListenerTest {
 
-    /** The header scheduling actually sends; notification has no such class. */
+    /**
+     * The header scheduling actually sends; notification has no such class.
+     */
     private static final String SCHEDULING_TYPE_ID =
             "com.vitorbetmann.hospitapi.scheduling.messaging.AppointmentEvent";
 
     private static final String EVENT_ID = "3f1c2a9e-7b4d-4e8a-9c1f-2d5e6a7b8c9d";
 
-    @Autowired RabbitTemplate rabbitTemplate;
-    @Autowired AmqpAdmin amqpAdmin;
-    @MockitoBean ReminderSender reminderSender;
+    @Autowired
+    RabbitTemplate rabbitTemplate;
+    @Autowired
+    AmqpAdmin amqpAdmin;
+    @MockitoBean
+    ReminderSender reminderSender;
 
     @BeforeEach
     void purgeDeadLetterQueue() {
@@ -123,5 +128,14 @@ class AppointmentEventListenerTest {
                   "occurredAt": "2026-09-18T10:00:00-03:00"
                 }
                 """.formatted(extraField, EVENT_ID, type, status);
+    }
+
+    @Test
+    void handlesReminderDue() {
+        publish("appointment.reminder-due", eventJson("REMINDER_DUE", "SCHEDULED", ""));
+
+        ArgumentCaptor<AppointmentEvent> captor = ArgumentCaptor.forClass(AppointmentEvent.class);
+        verify(reminderSender, timeout(5_000)).send(captor.capture());
+        assertThat(captor.getValue().type()).isEqualTo(AppointmentEventType.REMINDER_DUE);
     }
 }

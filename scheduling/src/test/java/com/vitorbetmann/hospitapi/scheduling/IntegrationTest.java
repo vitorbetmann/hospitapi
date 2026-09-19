@@ -16,7 +16,7 @@ import org.springframework.context.annotation.Import;
  */
 @Target(ElementType.TYPE)
 @Retention(RetentionPolicy.RUNTIME)
-@SpringBootTest
+@SpringBootTest(properties = "hospitapi.reminders.enabled=false")
 @AutoConfigureGraphQlTester
 @Import({TestcontainersConfiguration.class, TestClockConfiguration.class, TestMessagingConfiguration.class})
 @interface IntegrationTest {

@@ -110,8 +110,7 @@ root `compose.yaml`.
 - Appointment: id, patient (@ManyToOne), doctor (@ManyToOne User),
   scheduledAt, status (SCHEDULED | COMPLETED | CANCELLED), reason, notes,
   reminderSentAt (nullable, D-040), createdAt, updatedAt
-    - `scheduledAt` and `reminderSentAt` have no setters
-      (`@Setter(AccessLevel.NONE)` over the class-level `@Setter`).
+    - `scheduledAt` and `reminderSentAt` have no setters (`@Setter(AccessLevel.NONE)` over the class-level `@Setter`).
       `scheduledAt` changes only through `reschedule(OffsetDateTime)`, which
       clears `reminderSentAt` when the instant actually changes (compared
       with `isEqual`, not `equals`, so a different offset for the same moment
@@ -278,8 +277,7 @@ root `compose.yaml`.
 - `create` publishes CREATED, `update` publishes UPDATED (also when the status
   changes to COMPLETED or CANCELLED). Rejected updates publish nothing.
   `updateClinicalNotes` publishes nothing, and the event never carries `notes`.
-  The reminder job publishes REMINDER_DUE through the same after-commit path
-  (D-040; see Scheduled reminders).
+  The reminder job publishes REMINDER_DUE through the same after-commit path (D-040; see Scheduled reminders).
 - Spring swallows exceptions from after-commit listeners and logs only
   `TransactionSynchronization.afterCompletion threw exception`, followed by
   the stack trace. When an event doesn't arrive, read the log, not the assertion.
@@ -288,8 +286,8 @@ root `compose.yaml`.
 
 - Contract (D-037): notification has its own `AppointmentEvent` record plus
   `AppointmentEventType` and `AppointmentStatus` enums in `messaging/`. Never
-  share Java types between services. The listener binds by its parameter type
-  (the converter's default INFERRED precedence), ignoring scheduling's
+  share Java types between services. The listener binds by its parameter type (the converter's default INFERRED
+  precedence), ignoring scheduling's
   `__TypeId__` header. Unknown JSON fields are tolerated; an unknown enum
   value fails and ends up in the DLQ.
 - New enum constants go on the consumer side first. When running locally,
@@ -300,7 +298,7 @@ root `compose.yaml`.
   other status is acknowledged and logged at DEBUG. Never throw for a valid
   message: throwing triggers retries and dead-letters it.
 - Reminders go through the `ReminderSender` interface (`reminder/`); the only
-  implementation, `LoggingReminderSender`, logs them. Times are logged in UTC.
+  implementation, `LoggingReminderSender.java`, logs them. Times are logged in UTC.
 - Retries: `spring.rabbitmq.listener.simple.retry.max-retries=2` (3 attempts
   total), 1s initial interval, ×2 multiplier, 10s max. After the last attempt
   Boot's default `RejectAndDontRequeueRecoverer` rejects the message and the
@@ -387,8 +385,8 @@ root `compose.yaml`.
   not live in a cloud-synced folder (OneDrive, iCloud Desktop/Documents);
   OneDrive locks files in `target/` and breaks `mvnw clean`. On Windows the
   repo lives at `C:\_dev\hospitapi`.
-- Docker Desktop on Windows needs CPU virtualization enabled in the firmware
-  (Dell: F2 → Virtualization → Intel Virtualization Technology → Apply
+- Docker Desktop on Windows needs CPU virtualization enabled in the firmware (Dell: F2 → Virtualization → Intel
+  Virtualization Technology → Apply
   Changes) and WSL 2 (`wsl --install --no-distribution`, then reboot). If
   `docker info` shows a Client section but the Server section errors, the
   engine VM isn't running.
@@ -401,8 +399,7 @@ root `compose.yaml`.
   (`-Dincludes='org.mockito:*'`), or zsh expands the glob and fails.
 - Create Java sources with the IDE's "New Java Class". A file without the
   `.java` extension is silently skipped by Maven; the symptom is a green
-  build with fewer compiled files or tests than expected
-  (`Compiling N source files`, `Tests run: N`).
+  build with fewer compiled files or tests than expected (`Compiling N source files`, `Tests run: N`).
 - Snippets pasted from chat may omit imports. A `cannot find symbol` for
   `Configuration`, `Bean` or `Clock` means a missing import, not a missing
   dependency.
@@ -567,8 +564,7 @@ nested inputs).
 
 - `AppointmentEventListenerTest` (root test package) uses `@SpringBootTest`
   with `@Import(TestcontainersConfiguration.class)`, a `@MockitoBean
-  ReminderSender`, and properties that shorten the retry intervals
-  (100ms initial, 200ms max).
+  ReminderSender`, and properties that shorten the retry intervals (100ms initial, 200ms max).
 - Publish **raw JSON** with `rabbitTemplate.send(...)` and scheduling's real
   `__TypeId__` header (`com.vitorbetmann.hospitapi.scheduling.messaging.AppointmentEvent`),
   never `convertAndSend` with notification's own record. This is what proves
@@ -598,8 +594,8 @@ nested inputs).
        `updateClinicalNotes` (D-031), GraphQL integration tests (D-034, D-035)
 - [x] 
     5. Messaging: exchange and publish after commit in scheduling (D-036);
-       notification consumer with queue, DLX/DLQ, retries, status filter
-       (D-037, D-038, D-039); producer and consumer tests; manual end-to-end
+       notification consumer with queue, DLX/DLQ, retries, status filter (D-037, D-038, D-039); producer and consumer
+       tests; manual end-to-end
        check (reminders, skip on cancel, durability while notification is
        down, poison message to DLQ)
 - [ ] 

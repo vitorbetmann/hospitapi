@@ -29,7 +29,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 @IntegrationTest
 @Sql(scripts = "/sql/test-patient.sql", executionPhase = Sql.ExecutionPhase.BEFORE_TEST_CLASS)
-@WithUserDetails("nurse") // TODO: your seeded nurse username
+@WithUserDetails("nurse")
 class AppointmentEventPublishingTest {
 
     private static final long TEST_PATIENT_ID = 900L;
@@ -113,13 +113,11 @@ class AppointmentEventPublishingTest {
     }
 
     private CreateAppointmentInput newAppointmentInput() {
-        // TODO: match your record's component order
         return new CreateAppointmentInput(TEST_PATIENT_ID, SEEDED_DOCTOR_ID,
                 OffsetDateTime.now(clock).plusDays(2), "Messaging test");
     }
 
     private UpdateAppointmentInput updateInput(OffsetDateTime scheduledAt, AppointmentStatus status) {
-        // TODO: match your record's component order (doctorId, scheduledAt, status, reason)
         return new UpdateAppointmentInput(null, scheduledAt, status, null);
     }
 }
