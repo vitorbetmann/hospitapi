@@ -64,7 +64,7 @@ public class AppointmentService {
         Appointment appointment = new Appointment();
         appointment.setPatient(findPatient(input.patientId()));
         appointment.setDoctor(findDoctor(input.doctorId()));
-        appointment.setScheduledAt(input.scheduledAt());
+        appointment.reschedule(input.scheduledAt());
         appointment.setReason(requireMaxLength("reason", input.reason(), REASON_MAX_LENGTH));
         appointment.setStatus(AppointmentStatus.SCHEDULED);
 
@@ -84,7 +84,7 @@ public class AppointmentService {
             appointment.setDoctor(findDoctor(input.doctorId()));
         }
         if (input.scheduledAt() != null) {
-            appointment.setScheduledAt(input.scheduledAt());
+            appointment.reschedule(input.scheduledAt());
         }
         if (input.status() != null) {
             appointment.setStatus(input.status());

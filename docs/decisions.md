@@ -458,7 +458,7 @@ Entry template:
   containers and slows the suite).
   Relaxing assertions to `contains` (weaker tests).
 
-### D-036 Appointment events are published after commit via a transactional event listener
+## D-036 Appointment events are published after commit via a transactional event listener
 
 - Status: Accepted
 - Part: 5
@@ -481,28 +481,86 @@ Entry template:
   challenge-sized scope); publishing inside the transaction with
   channelTransacted (best-effort only, not atomic with the DB).
 
-D-037: Event contract is JSON field names; each service owns its copy of the type
+## D-037 Event contract is the JSON field names; each service owns its copy of the type
 
-Status: Accepted
-Part: 5
-Decision: Notification defines its own AppointmentEvent record and enums, and binds by the @RabbitListener parameter type, ignoring scheduling's __TypeId__ header. Unknown JSON fields are tolerated. An unknown enum value fails and ends up in the DLQ.
-Why: The services are standalone Maven projects with no root pom. Sharing Java types would couple their builds and deployments. Field names are the actual contract, and tests pin it with raw JSON.
-Alternatives considered: A shared contract module, which needs a root pom or a published artifact. Consuming as Map/JsonNode, which gives up type safety. Configuring type-id mapping between the two class names, which keeps the coupling through class names.
+- Status: Accepted
+- Part: 5
+- Decision: Notification defines its own `AppointmentEvent` record plus
+  `AppointmentEventType` and `AppointmentStatus` enums, and binds by the
+  `@RabbitListener` parameter type (the converter's default INFERRED type
+  precedence), ignoring scheduling's `__TypeId__` header. Unknown JSON fields
+  are tolerated; an unknown enum value fails and ends up in the DLQ.
+- Why: The services are standalone Maven projects with no root pom (D-005).
+  Sharing Java types would couple their builds and releases. The JSON field
+  names are the real contract, and tests pin it by publishing raw JSON with
+  scheduling's actual type header.
+- Alternatives considered: A shared contract module (needs a root pom or a
+  published artifact). Consuming `Map`/`JsonNode` (no type safety). Mapping
+  type ids between the two class names (keeps the coupling through class names).
 
-D-038: Notification is stateless; no event deduplication
+## D-038 Notification is stateless; no event deduplication
 
-Status: Accepted
-Part: 5
-Decision: Notification has no database. It doesn't dedupe by eventId, so under at-least-once delivery a redelivered event can produce a duplicate reminder.
-Why: Reminders are logged or mocked, so a duplicate costs nothing. Real dedupe needs persistent storage (an in-memory set doesn't survive restarts or multiple instances), and adding Postgres and Flyway to notification isn't justified by the requirements.
-Alternatives considered: A processed-events table in notification's own database. A local appointments table that also serves as Part 6's data source. An in-memory set, rejected because it only looks like idempotency.
-Consequence: Part 6's scheduled job needs a data source. It will either query scheduling or be covered by a decision that supersedes this one.
+- Status: Accepted
+- Part: 5
+- Decision: Notification has no database and does not deduplicate by
+  `eventId`. Under at-least-once delivery, a redelivered event can produce a
+  duplicate reminder.
+- Why: Reminders are logged (mocked), so a duplicate costs nothing. Real
+  dedupe needs persistent storage, and adding Postgres and Flyway to
+  notification isn't justified by the brief.
+- Alternatives considered: A processed-events table in a notification-owned
+  database. A local appointments table that would also feed Part 6's job. An
+  in-memory set (rejected: lost on restart and not shared between instances,
+  so it only looks like idempotency).
+- Consequence: Part 6's scheduled job has no local data. It must query
+  scheduling, or a later decision superseding this one adds persistence.
 
-D-039: Consumer declares the shared exchange and owns its queue, DLX and DLQ
+## D-039 Consumer declares the shared exchange and owns its queue, DLX and DLQ
 
-Status: Accepted
-Part: 5
-Decision: Notification declares hospitapi.appointments with the same type and durability as scheduling. It also declares its own notification.appointment-events queue, the notification.dlx direct exchange, and the notification.appointment-events.dlq queue. Retries use spring.rabbitmq.listener.simple.retry.* with Boot's default reject-without-requeue recoverer.
-Why: Declarations are idempotent, and binding to a missing exchange fails, so either service can start first. Each consumer owns its failure handling.
-Alternatives considered: Declaring the exchange only in scheduling and requiring startup order in compose and the README. A shared DLX for all consumers.
+- Status: Accepted
+- Part: 5
+- Decision: Notification declares `hospitapi.appointments` (topic, durable)
+  identically to scheduling, plus its own `notification.appointment-events`
+  queue (with dead-letter arguments), the `notification.dlx` direct exchange
+  and the `notification.appointment-events.dlq` queue. Listener retry uses
+  `spring.rabbitmq.listener.simple.retry.max-retries=2` (3 attempts total)
+  with Boot's default reject-without-requeue recoverer, which dead-letters.
+- Why: Declarations are idempotent, and binding to a missing exchange fails,
+  so declaring it in both services lets either start first (verified
+  manually). Each consumer owns its failure handling.
+- Alternatives considered: Declaring the exchange only in scheduling and
+  requiring startup order in compose and the README. A single DLX shared by
+  all consumers.
 
+  ## D-040 The 24-hour reminder job runs in scheduling and publishes REMINDER_DUE events
+
+- Status: Accepted
+- Part: 6
+- Decision: A @Scheduled job in scheduling selects appointments with status
+  SCHEDULED, `scheduledAt` in [now, now + 24h) and `reminder_sent_at` null.
+  In one transaction it sets `reminder_sent_at` and publishes an
+  AppointmentEvent of type REMINDER_DUE (routing key
+  `appointment.reminder-due`) through the after-commit path of D-036.
+  Notification handles it with its existing listener and ReminderSender and
+  stays stateless. Due rows are read with a pessimistic write lock that
+  skips locked rows, so overlapping runs or instances never claim the same
+  appointment. Changing `scheduledAt` clears `reminder_sent_at`. Time comes
+  from the Clock bean. The interval and window are properties. The job is
+  switched by `hospitapi.reminders.enabled` (default true, false in tests).
+  This corrects D-038's consequence note, which assumed the job needed data
+  in notification. D-038's decision itself is unchanged.
+- Why: Scheduling owns the appointment data, so dedupe is one column next to
+  it. No service-to-service authentication, no persistence in notification,
+  and the tested publish path and consumer are reused. Accepted trade-offs:
+  the job inherits D-036's loss window (if the broker is unreachable right
+  after commit, `reminder_sent_at` is set and that reminder is lost, not
+  retried). An appointment created less than 24h ahead gets both its
+  CREATED reminder and a REMINDER_DUE one.
+- Alternatives considered: Job in notification querying scheduling over
+  GraphQL or HTTP (needs a service account outside D-004's roles, and still
+  needs dedupe state, so persistence anyway). A notification-owned read model
+  built from events, superseding D-038 (database, Flyway, stale-event
+  handling and backfill for an optional part). ShedLock for multi-instance
+  safety (extra dependency and table; row locks cover it). Setting
+  `reminder_sent_at` only after a publisher confirm (closes the loss window,
+  but puts RabbitMQ into the job and departs from D-036).
