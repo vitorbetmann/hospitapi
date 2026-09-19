@@ -29,8 +29,8 @@ public interface AppointmentRepository extends JpaRepository<Appointment, Long> 
             select a from Appointment a
             where a.status = :status
               and a.reminderSentAt is null
-              and a.scheduledAt > :now
-              and a.scheduledAt <= :until
+              and a.scheduledAt >= :now
+              and a.scheduledAt < :until
             order by a.scheduledAt
             """)
     List<Appointment> lockDueForReminder(AppointmentStatus status,

@@ -564,3 +564,22 @@ Entry template:
   safety (extra dependency and table; row locks cover it). Setting
   `reminder_sent_at` only after a publisher confirm (closes the loss window,
   but puts RabbitMQ into the job and departs from D-036).
+
+## D-041: No optimistic locking on Appointment for now
+
+- **Status:** Accepted
+- **Part:** 6
+- **Decision:** `Appointment` has no `@Version` column. A staff update that
+  runs concurrently with the reminder job can write back a stale
+  `reminderSentAt = null`, which makes the job send a second REMINDER_DUE.
+  This is accepted and documented in the README.
+- **Why:** The race only duplicates reminders; it never loses one. Duplicate
+  reminders are already accepted, since notification is at-least-once with
+  no deduplication (D-038). Optimistic locking would add a migration, an
+  entity field and a GraphQL error mapping for conflicts, which is outside
+  the scope of an optional part.
+- **Alternatives considered:** `@Version` on `Appointment` (fixes this race
+  and also lost updates between two staff edits; revisit in Part 7);
+  `@DynamicUpdate` (writes only changed columns, but hides the staff-vs-staff
+  lost update instead of reporting it); locking the row in `update()`
+  (serializes every edit for a rare race).

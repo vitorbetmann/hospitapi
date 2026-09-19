@@ -30,8 +30,7 @@ root `compose.yaml`.
 - `application.properties` only (no YAML)
 - scheduling: PostgreSQL, Flyway, Spring Data JPA, Spring Security, Spring for
   GraphQL, Spring AMQP, Actuator, Lombok, Testcontainers
-- notification: Spring AMQP, Spring Web MVC (health only), Actuator,
-  Validation, Lombok, Testcontainers (RabbitMQ only)
+- notification: Spring AMQP, Spring Web MVC (health only), Actuator, Lombok, Testcontainers (RabbitMQ only)
 - Infrastructure (Postgres + RabbitMQ) is started with `docker compose up -d`
   from the repo root. `compose.yaml` contains infrastructure only during
   development (D-018); services run on the host with `./mvnw spring-boot:run`
@@ -323,7 +322,7 @@ root `compose.yaml`.
   `ReminderService`. They are separate beans because `@Transactional` works
   only through the proxy, and so tests can call the service directly.
 - `config/SchedulingConfig` carries `@EnableScheduling`, guarded by
-  `@ConditionalOnProperty(name = "hospitapi.reminders.enabled", matchIfMissing = true)`.
+  `@ConditionalOnBooleanProperty(name = "hospitapi.reminders.enabled", matchIfMissing = true)`.
 - Properties: `hospitapi.reminders.enabled` (default true),
   `hospitapi.reminders.interval` (ISO-8601 duration, default `PT5M`, used as
   `fixedDelayString`), `hospitapi.reminders.window` (default `PT24H`).
