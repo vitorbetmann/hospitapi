@@ -30,7 +30,10 @@ root `compose.yaml`.
 - `application.properties` only (no YAML)
 - scheduling: PostgreSQL, Flyway, Spring Data JPA, Spring Security, Spring for
   GraphQL, Spring AMQP, Actuator, Lombok, Testcontainers
-- notification: Spring AMQP, Spring Web MVC (health only), Actuator, Lombok, Testcontainers (RabbitMQ only)
+- notification: Spring AMQP, Spring Web MVC (health only), Actuator,
+  Lombok, Testcontainers (RabbitMQ only). No Bean Validation: incoming
+  events are not validated field by field; malformed JSON and unknown enum
+  values already end up in the DLQ.
 - Infrastructure (Postgres + RabbitMQ) is started with `docker compose up -d`
   from the repo root. `compose.yaml` contains infrastructure only during
   development (D-018); services run on the host with `./mvnw spring-boot:run`
@@ -70,6 +73,8 @@ root `compose.yaml`.
   `spring.rabbitmq.listener.simple.retry.max-retries` (retries after the
   first attempt, default 3). `max-attempts` is deprecated at level `error`
   in Boot 4 and silently ignored — setting it leaves the default in place.
+- For true/false feature flags use `@ConditionalOnBooleanProperty`
+  (Boot 3.5+), not `@ConditionalOnProperty` with `havingValue = "true"`.
 - To check whether a property still exists, read
   `META-INF/spring-configuration-metadata.json` inside the relevant Boot jar
   in `~/.m2` (e.g. `spring-boot-amqp-4.1.1.jar`); it lists deprecations and
@@ -81,6 +86,8 @@ root `compose.yaml`.
 - **Testcontainers 2.x**: modules are prefixed — `testcontainers-postgresql`,
   `testcontainers-rabbitmq`, `testcontainers-junit-jupiter`. The 1.x
   coordinates (`org.testcontainers:postgresql`) do not resolve.
+  `testcontainers-junit-jupiter` is only needed for `@Testcontainers` /
+  `@Container`; with `@ServiceConnection` beans it is unused.
 - Container classes moved out of `org.testcontainers.containers` into a
   per-module package: `org.testcontainers.postgresql.PostgreSQLContainer`,
   `org.testcontainers.rabbitmq.RabbitMQContainer`.
@@ -98,8 +105,10 @@ root `compose.yaml`.
   `rabbitmq:4-management-alpine` tag floats across 4.x, which is how 4.3
   arrived without any change in this repo.
 - **Hibernate 7** (managed by Boot 4): the `jakarta.persistence.lock.timeout`
-  hint value `-2` is meant to produce `SKIP LOCKED`. Verify it in the
-  generated SQL (see Scheduled reminders) rather than trusting it.
+  hint value `-2` produces `SKIP LOCKED`. On PostgreSQL, `PESSIMISTIC_WRITE`
+  renders as `for no key update ... skip locked` (verified in Part 6).
+  Hibernate writes every column on update (no `@DynamicUpdate`), so a stale
+  entity overwrites columns it never changed (see D-041).
 
 ## Domain (Part 2, authoritative)
 
@@ -108,7 +117,8 @@ root `compose.yaml`.
 - Patient: id, name, email, phone
 - Appointment: id, patient (@ManyToOne), doctor (@ManyToOne User),
   scheduledAt, status (SCHEDULED | COMPLETED | CANCELLED), reason, notes,
-  reminderSentAt (nullable, D-040), createdAt, updatedAt
+  reminderSentAt (nullable, D-040), createdAt, updatedAt. No `@Version`
+  column (D-041).
     - `scheduledAt` and `reminderSentAt` have no setters (`@Setter(AccessLevel.NONE)` over the class-level `@Setter`).
       `scheduledAt` changes only through `reschedule(OffsetDateTime)`, which
       clears `reminderSentAt` when the instant actually changes (compared
@@ -184,7 +194,9 @@ root `compose.yaml`.
   wrong password returns 401 even on `permitAll` paths, because the Basic
   filter rejects bad credentials before authorization runs.
 - The reminder job runs with no authenticated user, so `ReminderService`
-  carries no `@PreAuthorize` and is never called from GraphQL.
+  carries no `@PreAuthorize`, never calls `AppointmentService` (whose
+  `@PreAuthorize` checks would throw without a `SecurityContext`), and is
+  never called from GraphQL.
 
 ## GraphQL (Part 4)
 
@@ -318,25 +330,38 @@ root `compose.yaml`.
   reads due rows, calls `markReminderSent(now)` on each, and publishes
   `AppointmentEvent.of(REMINDER_DUE, appointment, clock)` with
   `ApplicationEventPublisher`. Dirty checking saves the marks; no `save()`.
+  It returns the number of reminders published. It has an explicit
+  constructor because Lombok's `@RequiredArgsConstructor` doesn't copy
+  `@Value` onto the constructor parameter.
 - `service/ReminderJob` is a thin `@Scheduled` bean that only calls
-  `ReminderService`. They are separate beans because `@Transactional` works
-  only through the proxy, and so tests can call the service directly.
+  `ReminderService` and logs `Published N REMINDER_DUE event(s)` when N > 0.
+  They are separate beans because `@Transactional` works only through the
+  proxy, and so tests can call the service directly.
 - `config/SchedulingConfig` carries `@EnableScheduling`, guarded by
   `@ConditionalOnBooleanProperty(name = "hospitapi.reminders.enabled", matchIfMissing = true)`.
-- Properties: `hospitapi.reminders.enabled` (default true),
-  `hospitapi.reminders.interval` (ISO-8601 duration, default `PT5M`, used as
-  `fixedDelayString`), `hospitapi.reminders.window` (default `PT24H`).
-- The repository query uses `@Lock(PESSIMISTIC_WRITE)` plus the
-  `jakarta.persistence.lock.timeout = -2` hint, so overlapping runs or
-  instances skip rows another transaction has claimed. Verify once with
-  `logging.level.org.hibernate.SQL=DEBUG` that the SQL ends in `skip locked`.
-  Don't `join fetch` the patient in this query: `FOR UPDATE` over a join
-  would lock patient rows too. The lazy patient loads inside the transaction.
-- Accepted trade-offs (D-040): the D-036 loss window applies (if the broker
-  is unreachable right after commit, `reminderSentAt` is set and that
-  reminder is lost). An appointment created less than one window ahead gets
-  both its CREATED reminder and a REMINDER_DUE reminder. Both go in the
-  README.
+  With the flag off, the `ReminderJob` bean still exists but never runs.
+- Properties, all set in the base `application.properties` (not a profile
+  file, and no inline defaults in code): `hospitapi.reminders.enabled`
+  (`true`), `hospitapi.reminders.interval` (ISO-8601 duration, `PT5M`, used
+  as `fixedDelayString`), `hospitapi.reminders.window` (`PT24H`). A missing
+  `window` fails startup (`@Value` resolves at bean creation); a missing
+  `interval` fails only once scheduling is enabled.
+- The claim query, `AppointmentRepository.lockDueForReminder`, uses
+  `@Lock(PESSIMISTIC_WRITE)` plus the `jakarta.persistence.lock.timeout = -2`
+  hint, so overlapping runs or instances skip rows another transaction has
+  claimed. Verified on PostgreSQL: the SQL ends in
+  `for no key update of a1_0 skip locked`. It has no `@EntityGraph` and no
+  `join fetch`, unlike the GraphQL-facing methods: `FOR UPDATE` over a join
+  would lock patient rows too, and PostgreSQL rejects it on the nullable side
+  of an outer join. The lazy patient loads inside the transaction.
+- Accepted trade-offs, all for the README:
+    - The D-036 loss window applies (D-040): if the broker is unreachable
+      right after commit, `reminderSentAt` is set and that reminder is lost.
+    - An appointment created less than one window ahead gets both its CREATED
+      reminder and a REMINDER_DUE reminder (D-040).
+    - A staff update running concurrently with the job can write back a stale
+      `reminderSentAt = null`, causing a duplicate REMINDER_DUE (no
+      `@Version`, D-041). Duplicates only, never a lost reminder.
 - Never let the job run on a timer in tests (see Testing).
 
 ## Conventions
@@ -430,6 +455,12 @@ curl localhost:8081/actuator/health         # rabbit UP (no db, no security by d
 # scheduling with a short reminder interval and SQL logging (manual Part 6 check)
 ./mvnw spring-boot:run "-Dspring-boot.run.arguments=--hospitapi.reminders.interval=PT30S --logging.level.org.hibernate.SQL=DEBUG"
 
+# one test class with SQL logging (the -D reaches the forked test JVM)
+./mvnw test -Dtest=ReminderServiceIntegrationTest "-Dlogging.level.org.hibernate.SQL=DEBUG"
+
+# root cause of a context that failed to load
+grep -h "Caused by" target/surefire-reports/<FirstFailingTest>.txt
+
 # queue depth and consumers via the management API
 curl -u hospitapi:hospitapi localhost:15672/api/queues/%2F/notification.appointment-events
 curl -u hospitapi:hospitapi localhost:15672/api/queues/%2F/notification.appointment-events.dlq
@@ -441,6 +472,10 @@ PowerShell GraphQL calls: use `Invoke-RestMethod` with GraphQL variables,
 put the query in single quotes (double quotes make PowerShell expand `$id`),
 and pass `-Depth 5` to `ConvertTo-Json` (the default depth of 2 mangles
 nested inputs).
+
+zsh/bash GraphQL calls: `curl -s -u nurse:nurse123 -H 'Content-Type: application/json'
+localhost:8080/graphql -d '{"query": "...", "variables": {...}}'`. Single
+quotes around the body keep the shell from expanding `$input`.
 
 ## Testing
 
@@ -459,6 +494,10 @@ nested inputs).
   containers. `@Mock` needs `@ExtendWith(MockitoExtension.class)` in Boot 4.
 - `TestcontainersConfiguration` is package-private in both services, so tests
   importing it live in the root test package of their service.
+- When many tests fail with "ApplicationContext failure threshold (1)
+  exceeded", those are follow-on errors: Spring doesn't retry a context that
+  already failed. The real cause is in the first failed load; grep its
+  surefire report for `Caused by` (see Commands).
 
 ### Integration tests: one shared context (D-034)
 
@@ -504,6 +543,10 @@ nested inputs).
   tests appointment 3 (+20h) is in the past and appointment 1 (+3d) in the
   future; this proves services use the injected `Clock`. The bean name must
   differ from the application's `clock` bean (bean overriding is off).
+- The fixed test clock may carry nanoseconds, while Postgres keeps
+  microseconds. Truncate times a test writes and later compares with
+  `isEqual` (e.g. to seconds), and compare stored "now" values such as
+  `reminderSentAt` with `isCloseTo(..., within(1, ChronoUnit.MILLIS))`.
 
 ### Security and GraphQL tests
 
@@ -546,15 +589,21 @@ nested inputs).
 
 ### Reminder job tests (scheduling)
 
-- `@IntegrationTest` class that calls `ReminderService.publishDueReminders()`
-  directly; the timer is off in tests.
+- `ReminderServiceIntegrationTest` is an `@IntegrationTest` class that calls
+  `ReminderService.publishDueReminders()` directly; the timer is off in
+  tests. It runs as `@WithUserDetails("nurse")` only so setup can call
+  `AppointmentService`; the reminder service itself needs no user.
 - Create appointments for test patient 900 relative to `clock.instant()`
-  (the shifted test clock), never relying on seed positions. Purge
-  `TEST_QUEUE` after setup, since `create` publishes CREATED.
+  (the shifted test clock), never relying on seed positions. Test times are
+  truncated to seconds (see data and time). Purge `TEST_QUEUE` after setup,
+  since `create` publishes CREATED.
 - Cases: +2h SCHEDULED is claimed (one REMINDER_DUE, `reminderSentAt` set);
   +30h and a +2h CANCELLED one are skipped; a second run publishes nothing;
   rescheduling to a different instant makes it claimable again; an update to
   the same instant with a different offset does not.
+- Tests that run the job twice drain `TEST_QUEUE` after the first run and
+  assert exactly one REMINDER_DUE, instead of purging: this also proves the
+  first claim happened, so "nothing on the second run" can't pass vacuously.
 - Earlier tests in the shared context may leave due appointments for
   patient 900. Assert on the appointment ids a test created, not on the
   total number of events.
@@ -569,8 +618,8 @@ nested inputs).
   never `convertAndSend` with notification's own record. This is what proves
   the contract is the JSON, not the Java class (D-037).
 - Every event type needs a binding test, REMINDER_DUE included (routing key
-  `appointment.reminder-due`): it catches a missing enum constant, which
-  would otherwise surface only as a message in the DLQ.
+  `appointment.reminder-due`, `handlesReminderDue`): it catches a missing
+  enum constant, which would otherwise surface only as a message in the DLQ.
 - Wait for asynchronous delivery with Mockito: `verify(mock, timeout(5_000))`
   for arrival, `verify(mock, after(1_000).never())` for absence.
 - Purge the DLQ in `@BeforeEach`; read it with
@@ -597,24 +646,28 @@ nested inputs).
        tests; manual end-to-end
        check (reminders, skip on cancel, durability while notification is
        down, poison message to DLQ)
-- [ ] 
-    6. Scheduled reminders (extra), D-040. Done: `Clock` bean moved to
-       `config/ClockConfig`; `reminder_sent_at` migration; entity
-       `reschedule` / `markReminderSent` with setters removed; REMINDER_DUE in
-       both enums. Remaining: claim query, `ReminderService`, `ReminderJob`,
-       `SchedulingConfig` + properties, disabling the timer in
-       `@IntegrationTest`, reminder job tests, REMINDER_DUE consumer test,
-       manual end-to-end check.
+- [x] 
+    6. Scheduled reminders (extra), D-040/D-041: `Clock` in `config/ClockConfig`;
+       `reminder_sent_at` migration; entity `reschedule` / `markReminderSent`;
+       REMINDER_DUE in both enums; skip-locked claim query; `ReminderService`
+       and `ReminderJob`; `SchedulingConfig` + properties; timer off in
+       `@IntegrationTest`; reminder job integration tests; REMINDER_DUE consumer
+       test; unused notification dependencies removed; manual end-to-end check (claim, no second claim, reschedule
+       re-arms, reason-only update doesn't,
+       cancelled never claimed).
 - [ ] 
     7. Tests: unit tests, Testcontainers RabbitMQ integration, MockMvc
        filter-chain test (health public, everything else 401). GraphQL
-       integration tests were done in Part 4.
+       integration tests were done in Part 4. Revisit `@Version` on
+       `Appointment` (D-041; would also fix lost updates between two staff
+       edits). Register Mockito as a Java agent in surefire (the
+       "self-attaching" warning becomes an error in a future JDK).
 - [ ] 
     8. Deliverables: Dockerfiles and app services in `compose.yaml` for one-command startup, revisit health-detail
        exposure (D-020; consider `management.endpoint.health.roles=DOCTOR,NURSE`), README (architecture, how to run,
        schema, example operations, credentials, access rules, stateless/CSRF-off design, D-036 event-loss
        trade-off, async durability demo, UTC timestamps and varying offsets, Windows prerequisites for Docker
-       Desktop, reminder job behaviour and its D-040 trade-offs), Postman collection per role incl. denials (e.g.
+       Desktop, reminder job behaviour and its D-040/D-041 trade-offs), Postman collection per role incl. denials (e.g.
        PATIENT calling `createAppointment` → `FORBIDDEN`, no event published). Align local JDK 25.0.1 with the
        Dockerfile's Java 21; consider pinning the RabbitMQ minor tag (new decision).
 - [ ] 

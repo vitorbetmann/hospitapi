@@ -583,3 +583,17 @@ Entry template:
   `@DynamicUpdate` (writes only changed columns, but hides the staff-vs-staff
   lost update instead of reporting it); locking the row in `update()`
   (serializes every edit for a rare race).
+
+## D-042: Notification does not validate event payloads
+
+- **Status:** Accepted
+- **Part:** 6
+- **Decision:** Notification has no Bean Validation dependency and applies no
+  field-level checks to incoming `AppointmentEvent`s. Malformed JSON and
+  unknown enum values already fail deserialization and are dead-lettered.
+- **Why:** The only `ReminderSender` logs; no field is required for it to
+  work. Validation would add a dependency and a rejection path with no
+  consumer that needs it.
+- **Alternatives considered:** `@Valid` on the listener parameter with
+  constraints on the record (rejects events with missing fields to the DLQ;
+  worth revisiting when a real sender needs e.g. `patientEmail`).
