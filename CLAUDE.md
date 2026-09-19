@@ -13,13 +13,14 @@ root `compose.yaml`.
   DB-backed users), Spring for GraphQL, JPA + PostgreSQL, Flyway. Publishes
   appointment events to RabbitMQ after the transaction commits (D-036). Runs
   the 24-hour reminder job, which publishes REMINDER_DUE events (Part 6,
-  D-040).
+  D-040). Also serves appointment history through its GraphQL queries.
 - `notification/` (artifact `hospitapi-notification`): consumes appointment
   events, including REMINDER_DUE, and logs/mocks reminders. Stateless (D-038):
   no database, no Spring Security, no scheduled job; Spring Web only to expose
   `/actuator/health`.
-- `history/` (artifact `hospitapi-history`): optional stretch goal. Do not
-  start it until all mandatory parts work.
+- No `history/` service (D-044). The brief marks it optional, and
+  scheduling's GraphQL queries already serve appointment history. Do not
+  create a `history/` folder.
 - Broker: RabbitMQ, with JSON messages.
 
 ## Stack
@@ -97,6 +98,9 @@ root `compose.yaml`.
   Versions come from Boot's dependency management; never pin them.
 - **JUnit 6.0.3**, not JUnit 5. Everyday annotations are unchanged, but
   suspect this first when a snippet from a tutorial won't compile.
+- **Mockito** prints a "self-attaching" Java agent warning during tests on
+  recent JDKs. It is only a warning today; registering Mockito as a surefire
+  agent was left out of scope (D-043). Revisit only if it becomes an error.
 - **graphql-java 25.0** is managed by Boot. `graphql-java-extended-scalars`
   is pinned at 24.0 (no 25.x release yet, D-032). `dependency:tree` shows
   graphql-java under extended-scalars only because Maven prints each artifact
@@ -193,6 +197,8 @@ root `compose.yaml`.
   user sees component details (`show-details=when-authorized`, D-020). A
   wrong password returns 401 even on `permitAll` paths, because the Basic
   filter rejects bad credentials before authorization runs.
+- The filter chain itself (public health, 401 elsewhere, 401 on a wrong
+  password) has no automated test; the Postman collection demonstrates it (D-043).
 - The reminder job runs with no authenticated user, so `ReminderService`
   carries no `@PreAuthorize`, never calls `AppointmentService` (whose
   `@PreAuthorize` checks would throw without a `SecurityContext`), and is
@@ -362,6 +368,8 @@ root `compose.yaml`.
     - A staff update running concurrently with the job can write back a stale
       `reminderSentAt = null`, causing a duplicate REMINDER_DUE (no
       `@Version`, D-041). Duplicates only, never a lost reminder.
+    - Without `@Version`, two staff edits of the same appointment racing each
+      other are last-write-wins (D-041).
 - Never let the job run on a timer in tests (see Testing).
 
 ## Conventions
@@ -479,6 +487,8 @@ quotes around the body keep the shell from expanding `$input`.
 
 ## Testing
 
+- Tests are written alongside each Part; there is no separate test pass (D-043). A new feature ships with its tests in
+  the same Part.
 - Integration tests start their own Postgres and RabbitMQ via Testcontainers (D-022). `./mvnw test` needs Docker running
   but **not** `docker compose up`.
 - `@ServiceConnection` contributes a `ConnectionDetails` bean, which Boot
@@ -501,6 +511,8 @@ quotes around the body keep the shell from expanding `$input`.
 
 ### Integration tests: one shared context (D-034)
 
+- Applies to scheduling only (D-043). Notification's few test classes may
+  each start their own context and RabbitMQ container; that is accepted.
 - Every integration test class is annotated `@IntegrationTest`, a
   meta-annotation bundling `@SpringBootTest`, `@AutoConfigureGraphQlTester`
   and `@Import({TestcontainersConfiguration.class, TestClockConfiguration.class,
@@ -554,8 +566,9 @@ quotes around the body keep the shell from expanding `$input`.
   through the real `DatabaseUserDetailsService`. Service calls without a user
   throw `AuthenticationCredentialsNotFoundException`; through GraphQL they
   surface as `UNAUTHORIZED`.
-- GraphQL tests use `ExecutionGraphQlServiceTester` (in-process, no HTTP; the
-  filter chain is covered by the Part 7 MockMvc test).
+- GraphQL tests use `ExecutionGraphQlServiceTester` (in-process, no HTTP, so
+  the security filter chain is not exercised; the Postman collection covers
+  it, D-043).
 - Assert `.errors()` before `.path(...)`: `GraphQlTester` fails a test whose
   response has errors that were never checked. Error tests also check that
   the root field is `null`.
@@ -632,43 +645,47 @@ quotes around the body keep the shell from expanding `$input`.
 - [x] 
     0. Setup: Initializr projects, repo, CLAUDE.md, docs/, push to GitHub
 - [x] 
-    1. Infrastructure: compose.yaml (Postgres, RabbitMQ), application.properties per service, apps start and connect
+    1. Infrastructure: compose.yaml (Postgres, RabbitMQ), application.properties
+       per service, apps start and connect
 - [x] 
     2. Domain & persistence: entities, repositories, Flyway, seed data
 - [x] 
-    3. Security: SecurityFilterChain, UserDetailsService, PasswordEncoder, @PreAuthorize, ownership
+    3. Security: SecurityFilterChain, UserDetailsService, PasswordEncoder,
+       @PreAuthorize, ownership
 - [x] 
-    4. GraphQL: schema, queries/mutations, onlyFuture filter, error handling, notes via
-       `updateClinicalNotes` (D-031), GraphQL integration tests (D-034, D-035)
+    4. GraphQL: schema, queries/mutations, onlyFuture filter, error handling,
+       notes via `updateClinicalNotes` (D-031), GraphQL integration tests (D-034, D-035)
 - [x] 
     5. Messaging: exchange and publish after commit in scheduling (D-036);
-       notification consumer with queue, DLX/DLQ, retries, status filter (D-037, D-038, D-039); producer and consumer
-       tests; manual end-to-end
-       check (reminders, skip on cancel, durability while notification is
-       down, poison message to DLQ)
+       notification consumer with queue, DLX/DLQ, retries, status filter (D-037,
+       D-038, D-039); producer and consumer tests; manual end-to-end check (reminders, skip on cancel, durability while
+       notification is down, poison
+       message to DLQ)
 - [x] 
-    6. Scheduled reminders (extra), D-040/D-041: `Clock` in `config/ClockConfig`;
-       `reminder_sent_at` migration; entity `reschedule` / `markReminderSent`;
-       REMINDER_DUE in both enums; skip-locked claim query; `ReminderService`
-       and `ReminderJob`; `SchedulingConfig` + properties; timer off in
-       `@IntegrationTest`; reminder job integration tests; REMINDER_DUE consumer
-       test; unused notification dependencies removed; manual end-to-end check (claim, no second claim, reschedule
-       re-arms, reason-only update doesn't,
-       cancelled never claimed).
+    6. Scheduled reminders (extra), D-040/D-041: `Clock` in
+       `config/ClockConfig`; `reminder_sent_at` migration; entity `reschedule` /
+       `markReminderSent`; REMINDER_DUE in both enums; skip-locked claim query;
+       `ReminderService` and `ReminderJob`; `SchedulingConfig` + properties; timer
+       off in `@IntegrationTest`; reminder job integration tests; REMINDER_DUE
+       consumer test; unused notification dependencies removed; manual end-to-end
+       check (claim, no second claim, reschedule re-arms, reason-only update
+       doesn't, cancelled never claimed).
+- [x] 
+    7. Tests: covered by the tests written in Parts 2–6 (D-043). No MockMvc
+       filter-chain test (Postman covers it), no `@Version` revisit (D-041
+       stands), no Mockito surefire agent, D-034 scoped to scheduling.
 - [ ] 
-    7. Tests: unit tests, Testcontainers RabbitMQ integration, MockMvc
-       filter-chain test (health public, everything else 401). GraphQL
-       integration tests were done in Part 4. Revisit `@Version` on
-       `Appointment` (D-041; would also fix lost updates between two staff
-       edits). Register Mockito as a Java agent in surefire (the
-       "self-attaching" warning becomes an error in a future JDK).
-- [ ] 
-    8. Deliverables: Dockerfiles and app services in `compose.yaml` for one-command startup, revisit health-detail
-       exposure (D-020; consider `management.endpoint.health.roles=DOCTOR,NURSE`), README (architecture, how to run,
-       schema, example operations, credentials, access rules, stateless/CSRF-off design, D-036 event-loss
-       trade-off, async durability demo, UTC timestamps and varying offsets, Windows prerequisites for Docker
-       Desktop, reminder job behaviour and its D-040/D-041 trade-offs), Postman collection per role incl. denials (e.g.
-       PATIENT calling `createAppointment` → `FORBIDDEN`, no event published). Align local JDK 25.0.1 with the
-       Dockerfile's Java 21; consider pinning the RabbitMQ minor tag (new decision).
-- [ ] 
-    9. (Optional) Extract the `history/` service
+    8. Deliverables: Dockerfiles and app services in `compose.yaml` for
+       one-command startup; revisit health-detail exposure (D-020; consider
+       `management.endpoint.health.roles=DOCTOR,NURSE`); README (architecture, how
+       to run, schema, example operations, credentials, access rules,
+       stateless/CSRF-off design, D-036 event-loss trade-off, async durability
+       demo, UTC timestamps and varying offsets, Windows prerequisites for Docker
+       Desktop, reminder job behaviour and its D-040/D-041 trade-offs, why there is
+       no history service (D-044)); Postman collection per role incl. denials (e.g. PATIENT calling
+       `createAppointment` → `FORBIDDEN`, no event
+       published) and the filter-chain requests (anonymous `/graphql` → 401,
+       anonymous health → 200 with status only, wrong password → 401). Align local
+       JDK 25.0.1 with the Dockerfile's Java 21; consider pinning the RabbitMQ
+       minor tag (new decision).
+- ~~9. (Optional) Extract the `history/` service~~ Dropped (D-044).

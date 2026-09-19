@@ -597,3 +597,87 @@ Entry template:
 - **Alternatives considered:** `@Valid` on the listener parameter with
   constraints on the record (rejects events with missing fields to the DLQ;
   worth revisiting when a real sender needs e.g. `patientEmail`).
+
+### D-043 Tests are written per Part; no separate Part 7 pass
+
+- Status: Accepted
+- Part: 7
+- Decision: The tests written alongside Parts 2–6 are the test suite.
+  Part 7 adds nothing. The security filter chain (public health, 401
+  elsewhere) is shown by Postman requests instead of a MockMvc test.
+  D-034's shared-context rule applies to scheduling only. Mockito is not
+  registered as a surefire agent, and D-041 is not revisited.
+- Why: The brief doesn't require automated tests. The existing suite
+  already covers authorization, GraphQL, messaging and reminders against
+  real Postgres and RabbitMQ, and the remaining items add little for
+  their cost.
+- Alternatives considered: A dedicated Part 7 with a MockMvc filter-chain
+  test, a notification @IntegrationTest, a Mockito agent and @Version on
+  Appointment (more coverage and robustness, but beyond the brief).
+
+### D-044 No history service
+
+- Status: Accepted
+- Part: 9
+- Decision: The optional history service is not built. Appointment
+  history is served by scheduling's GraphQL queries (appointmentsByPatient with onlyFuture).
+- Why: The brief marks the service as optional, and scheduling already
+  meets the GraphQL history requirement. A third service would add a
+  second database or a data-sync path for no graded benefit.
+- Alternatives considered: A history service fed by appointment events,
+  with its own store and GraphQL API (shows event-driven data
+  replication, but duplicates existing functionality and adds
+  consistency trade-offs).
+
+### D-045 Full stack in compose by default; infrastructure-only by naming services
+
+- Status: Accepted
+- Part: 8
+- Supersedes: D-018
+- Decision: `compose.yaml` defines postgres, rabbitmq, notification and
+  scheduling. `docker compose up --build` starts everything. During
+  development, start infrastructure only with
+  `docker compose up -d postgres rabbitmq` and run the services on the host.
+- Why: Evaluators get a one-command start with no extra flags, and the
+  host-run development loop from D-018 still works.
+- Alternatives considered: compose profiles (apps only with `--profile app`,
+  so evaluators need a flag); a separate override file (more files to
+  explain).
+
+### D-046 Images built with multi-stage Dockerfiles
+
+- Status: Accepted
+- Part: 8
+- Decision: Each service has a multi-stage Dockerfile (temurin 21 JDK build
+  stage running `./mvnw package -DskipTests`, temurin 21 JRE runtime stage,
+  non-root user), built by compose.
+- Why: `docker compose up --build` works with only Docker installed. Tests
+  are skipped in the image build because Testcontainers needs a Docker
+  daemon; they run with `./mvnw test` on the host.
+- Alternatives considered: Spring Boot buildpacks (`spring-boot:build-image`),
+  which require a Maven step before compose and a large builder download.
+
+### D-047 Keep D-020 after containerization
+
+- Status: Accepted
+- Part: 8
+- Decision: Health detail exposure stays as in D-020.
+- Why: Compose healthchecks read only the health status, which is shown
+  whatever show-details is set to, so containerizing changes nothing.
+- Alternatives considered: `always` in both services.
+
+### D-048 Scheduling starts after notification is healthy
+
+- Status: Accepted
+- Part: 8
+- Decision: In compose.yaml, scheduling depends on notification with
+  `condition: service_healthy`.
+- Why: Notification declares the queue and binding for
+  `hospitapi.appointments`. On a fresh broker, events published before that
+  declaration are lost (unroutable, or the exchange doesn't exist yet), and a
+  lost REMINDER_DUE is never retried because reminderSentAt is already set. A
+  healthy status means a broker connection has been made and the declarations
+  have run.
+- Alternatives considered: scheduling also declaring the queue and binding (couples it to notification's topology);
+  publisher confirms with mandatory
+  returns plus retry (more code than the brief warrants).

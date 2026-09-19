@@ -9,7 +9,6 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      # Postgres 18+ : mount at /var/lib/postgresql, NOT /var/lib/postgresql/data
       - pgdata:/var/lib/postgresql
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}" ]
@@ -34,6 +33,49 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
+
+  notification:
+    build: ./notification
+    image: hospitapi-notification
+    container_name: hospitapi-notification
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: ${RABBITMQ_USER:-hospitapi}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-hospitapi}
+    ports:
+      - "8081:8081"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: [ "CMD", "curl", "-fsS", "http://localhost:8081/actuator/health" ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped
+
+  scheduling:
+    build: ./scheduling
+    image: hospitapi-scheduling
+    container_name: hospitapi-scheduling
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-hospitapi}
+      DB_USERNAME: ${POSTGRES_USER:-hospitapi}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-hospitapi}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: ${RABBITMQ_USER:-hospitapi}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-hospitapi}
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      notification:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:

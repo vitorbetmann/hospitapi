@@ -1,0 +1,1144 @@
+{
+  "info": {
+    "_postman_id": "e0e3a97f-625b-4cec-8f82-7f95cf4eb3f7",
+    "name": "hospitapi",
+    "description": "Tech Challenge Phase 3. Start the stack with `docker compose up --build`, then run the folders in order with the Collection Runner: later requests reuse ids saved by earlier ones.\n\nAuthorization denials inside GraphQL return HTTP 200 with `errors[].extensions.classification` set to FORBIDDEN. Only the filter chain answers with HTTP 401.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "noauth"
+  },
+  "variable": [
+    {
+      "key": "schedulingUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "notificationUrl",
+      "value": "http://localhost:8081"
+    },
+    {
+      "key": "patientId",
+      "value": "1"
+    },
+    {
+      "key": "otherPatientId",
+      "value": "2"
+    },
+    {
+      "key": "doctorId",
+      "value": "1"
+    },
+    {
+      "key": "appointmentId",
+      "value": "1"
+    },
+    {
+      "key": "soonAppointmentId",
+      "value": ""
+    },
+    {
+      "key": "cancelAppointmentId",
+      "value": ""
+    },
+    {
+      "key": "inTwoHours",
+      "value": ""
+    },
+    {
+      "key": "inTwoDays",
+      "value": ""
+    },
+    {
+      "key": "inThreeDays",
+      "value": ""
+    },
+    {
+      "key": "inFiveDays",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "0. Health & filter chain",
+      "description": "Actuator health and requests rejected by the Spring Security filter chain (HTTP 401) before reaching GraphQL.",
+      "auth": {
+        "type": "noauth"
+      },
+      "item": [
+        {
+          "name": "Notification health (details always shown)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Status UP', () => pm.expect(body.status).to.eql('UP'));",
+                  "pm.test('Details shown (D-020)', () => pm.expect(body.components).to.have.property('rabbit'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{notificationUrl}}/actuator/health",
+              "host": [
+                "{{notificationUrl}}"
+              ],
+              "path": [
+                "actuator",
+                "health"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Scheduling health, anonymous (status only)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Status UP', () => pm.expect(body.status).to.eql('UP'));",
+                  "pm.test('Details hidden from anonymous callers (D-020)', () => pm.expect(body.components).to.be.undefined);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{schedulingUrl}}/actuator/health",
+              "host": [
+                "{{schedulingUrl}}"
+              ],
+              "path": [
+                "actuator",
+                "health"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Scheduling health, authenticated (details shown)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Details shown to authenticated users (D-020)', () => pm.expect(body.components).to.have.property('db'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{schedulingUrl}}/actuator/health",
+              "host": [
+                "{{schedulingUrl}}"
+              ],
+              "path": [
+                "actuator",
+                "health"
+              ]
+            },
+            "auth": {
+              "type": "basic",
+              "basic": [
+                {
+                  "key": "username",
+                  "value": "doctor",
+                  "type": "string"
+                },
+                {
+                  "key": "password",
+                  "value": "doctor123",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "GraphQL without credentials -> 401",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 401 from the filter chain', () => pm.response.to.have.status(401));",
+                  "pm.test('Basic challenge header', () => pm.response.to.have.header('WWW-Authenticate'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "graphql",
+              "graphql": {
+                "query": "query { appointment(id: 1) { id } }\n",
+                "variables": "{}"
+              }
+            },
+            "url": {
+              "raw": "{{schedulingUrl}}/graphql",
+              "host": [
+                "{{schedulingUrl}}"
+              ],
+              "path": [
+                "graphql"
+              ]
+            }
+          }
+        },
+        {
+          "name": "GraphQL with wrong password -> 401",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 401 from the filter chain', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "graphql",
+              "graphql": {
+                "query": "query { appointment(id: 1) { id } }\n",
+                "variables": "{}"
+              }
+            },
+            "url": {
+              "raw": "{{schedulingUrl}}/graphql",
+              "host": [
+                "{{schedulingUrl}}"
+              ],
+              "path": [
+                "graphql"
+              ]
+            },
+            "auth": {
+              "type": "basic",
+              "basic": [
+                {
+                  "key": "username",
+                  "value": "doctor",
+                  "type": "string"
+                },
+                {
+                  "key": "password",
+                  "value": "wrong-password",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "1. Nurse",
+      "description": "NURSE can create, update and view appointments, but cannot edit clinical notes.",
+      "auth": {
+        "type": "basic",
+        "basic": [
+          {
+            "key": "username",
+            "value": "nurse",
+            "type": "string"
+          },
+          {
+            "key": "password",
+            "value": "nurse123",
+            "type": "string"
+          }
+        ]
+      },
+      "item": [
+        {
+          "name": "Create appointment (in 2 days)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const iso = ms => new Date(Date.now() + ms).toISOString().replace(/\\.\\d{3}Z$/, 'Z');",
+                  "pm.collectionVariables.set('inTwoDays', iso(48 * 3600000));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('No GraphQL errors', () => pm.expect(body.errors).to.be.undefined);",
+                  "const a = body.data.createAppointment;",
+                  "pm.test('Created as SCHEDULED', () => pm.expect(a.status).to.eql('SCHEDULED'));",
+                  "pm.collectionVariables.set('appointmentId', a.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "graphql",
+              "graphql": {
+                "query": "mutation CreateAppointment($input: CreateAppointmentInput!) {\n  createAppointment(input: $input) {\n    id\n    status\n    scheduledAt\n    reason\n    notes\n    patient { id name }\n    doctor { id name }\n  }\n}\n",
+                "variables": "{\n  \"input\": {\n    \"patientId\": \"{{patientId}}\",\n    \"doctorId\": \"{{doctorId}}\",\n    \"scheduledAt\": \"{{inTwoDays}}\",\n    \"reason\": \"Annual check-up\"\n  }\n}"
+              }
+            },
+            "url": {
+              "raw": "{{schedulingUrl}}/graphql",
+              "host": [
+                "{{schedulingUrl}}"
+              ],
+              "path": [
+                "graphql"
+              ]
+            },
+            "description": "Publishes a CREATED event. See it with `docker compose logs -f notification`."
+          }
+        },
+        {
+          "name": "Create appointment (in 2 hours, triggers reminder)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const iso = ms => new Date(Date.now() + ms).toISOString().replace(/\\.\\d{3}Z$/, 'Z');",
+                  "pm.collectionVariables.set('inTwoHours', iso(2 * 3600000));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('No GraphQL errors', () => pm.expect(body.errors).to.be.undefined);",
+                  "const a = body.data.createAppointment;",
+                  "pm.test('Created as SCHEDULED', () => pm.expect(a.status).to.eql('SCHEDULED'));",
+                  "pm.collectionVariables.set('soonAppointmentId', a.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "graphql",
+              "graphql": {
+                "query": "mutation CreateAppointment($input: CreateAppointmentInput!) {\n  createAppointment(input: $input) {\n    id\n    status\n    scheduledAt\n    reason\n    notes\n    patient { id name }\n    doctor { id name }\n  }\n}\n",
+                "variables": "{\n  \"input\": {\n    \"patientId\": \"{{patientId}}\",\n    \"doctorId\": \"{{doctorId}}\",\n    \"scheduledAt\": \"{{inTwoHours}}\",\n    \"reason\": \"Blood test results\"\n  }\n}"
+              }
+            },
+            "url": {
+              "raw": "{{schedulingUrl}}/graphql",
+              "host": [
+                "{{schedulingUrl}}"
+              ],
+              "path": [
+                "graphql"
+              ]
+            },
+            "description": "Falls inside the 24-hour reminder window, so the scheduling job publishes a REMINDER_DUE event on its next run (every 5 minutes). Watch `docker compose logs -f notification`."
+          }
+        },
+        {
+          "name": "Reschedule appointment",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const iso = ms => new Date(Date.now() + ms).toISOString().replace(/\\.\\d{3}Z$/, 'Z');",
+                  "pm.collectionVariables.set('inThreeDays', iso(72 * 3600000));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('No GraphQL errors', () => pm.expect(body.errors).to.be.undefined);",
+                  "const a = body.data.updateAppointment;",
+                  "pm.test('Reason updated', () => pm.expect(a.reason).to.eql('Annual check-up (rescheduled)'));",
+                  "pm.test('Rescheduled', () => pm.expect(new Date(a.scheduledAt).getTime()).to.eql(new Date(pm.collectionVariables.get('inThreeDays')).getTime()));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "graphql",
+              "graphql": {
+                "query": "mutation UpdateAppointment($id: ID!, $input: UpdateAppointmentInput!) {\n  updateAppointment(id: $id, input: $input) {\n    id\n    status\n    scheduledAt\n    reason\n    notes\n    patient { id name }\n    doctor { id name }\n  }\n}\n",
+                "variables": "{\n  \"id\": \"{{appointmentId}}\",\n  \"input\": {\n    \"scheduledAt\": \"{{inThreeDays}}\",\n    \"reason\": \"Annual check-up (rescheduled)\"\n  }\n}"
+              }
+            },
+            "url": {
+              "raw": "{{schedulingUrl}}/graphql",
+              "host": [
+                "{{schedulingUrl}}"
+              ],
+              "path": [
+                "graphql"
+              ]
+            },
+            "description": "Publishes an UPDATED event."
+          }
+        },
+        {
+          "name": "Get appointment by id",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('No GraphQL errors', () => pm.expect(body.errors).to.be.undefined);",
+                  "pm.test('Returns the requested appointment', () => pm.expect(body.data.appointment.id).to.eql(pm.collectionVariables.get('appointmentId')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "graphql",
+              "graphql": {
+                "query": "query Appointment($id: ID!) {\n  appointment(id: $id) {\n    id\n    status\n    scheduledAt\n    reason\n    notes\n    patient { id name }\n    doctor { id name }\n  }\n}\n",
+                "variables": "{\n  \"id\": \"{{appointmentId}}\"\n}"
+              }
+            },
+            "url": {
+              "raw": "{{schedulingUrl}}/graphql",
+              "host": [
+                "{{schedulingUrl}}"
+              ],
+              "path": [
+                "graphql"
+              ]
+            }
+          }
+        },
+        {
+          "name": "List future appointments of patient 1",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('No GraphQL errors', () => pm.expect(body.errors).to.be.undefined);",
+                  "const list = body.data.appointmentsByPatient;",
+                  "pm.test('Only future appointments', () => list.forEach(a => pm.expect(new Date(a.scheduledAt).getTime()).to.be.above(Date.now())));",
+                  "pm.test('Soonest first', () => { for (let i = 1; i < list.length; i++) pm.expect(new Date(list[i].scheduledAt).getTime()).to.be.at.least(new Date(list[i-1].scheduledAt).getTime()); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "graphql",
+              "graphql": {
+                "query": "query AppointmentsByPatient($patientId: ID!, $onlyFuture: Boolean) {\n  appointmentsByPatient(patientId: $patientId, onlyFuture: $onlyFuture) {\n    id\n    status\n    scheduledAt\n    reason\n    notes\n    patient { id }\n  }\n}\n",
+                "variables": "{\n  \"patientId\": \"{{patientId}}\",\n  \"onlyFuture\": true\n}"
+              }
+            },
+            "url": {
+              "raw": "{{schedulingUrl}}/graphql",
+              "host": [
+                "{{schedulingUrl}}"
+              ],
+              "path": [
+                "graphql"
+              ]
+            }
+          }
+        },
+        {
+          "name": "List appointments of another patient (allowed for staff)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('No GraphQL errors', () => pm.expect(body.errors).to.be.undefined);",
+                  "pm.test('All belong to patient 2', () => body.data.appointmentsByPatient.forEach(a => pm.expect(a.patient.id).to.eql(pm.collectionVariables.get('otherPatientId'))));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "graphql",
+              "graphql": {
+                "query": "query AppointmentsByPatient($patientId: ID!, $onlyFuture: Boolean) {\n  appointmentsByPatient(patientId: $patientId, onlyFuture: $onlyFuture) {\n    id\n    status\n    scheduledAt\n    reason\n    notes\n    patient { id }\n  }\n}\n",
+                "variables": "{\n  \"patientId\": \"{{otherPatientId}}\"\n}"
+              }
+            },
+            "url": {
+              "raw": "{{schedulingUrl}}/graphql",
+              "host": [
+                "{{schedulingUrl}}"
+              ],
+              "path": [
+                "graphql"
+              ]
+            }
+          }
+        },
+        {
+          "name": "DENIED: edit clinical notes",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200 (GraphQL reports errors in the body)', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Classification is FORBIDDEN', () => pm.expect(body.errors[0].extensions.classification).to.eql('FORBIDDEN'));",
+                  "pm.test('No data returned', () => pm.expect(body.data && body.data.updateClinicalNotes).to.not.be.ok);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "graphql",
+              "graphql": {
+                "query": "mutation UpdateClinicalNotes($id: ID!, $notes: String!) {\n  updateClinicalNotes(id: $id, notes: $notes) {\n    id\n    notes\n  }\n}\n",
+                "variables": "{\n  \"id\": \"{{appointmentId}}\",\n  \"notes\": \"Nurses may not write this.\"\n}"
+              }
+            },
+            "url": {
+              "raw": "{{schedulingUrl}}/graphql",
+              "host": [
+                "{{schedulingUrl}}"
+              ],
+              "path": [
+                "graphql"
+              ]
+            },
+            "description": "Only DOCTOR edits clinical notes (D-031)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Doctor",
+      "description": "DOCTOR can do everything NURSE can, plus edit clinical notes.",
+      "auth": {
+        "type": "basic",
+        "basic": [
+          {
+            "key": "username",
+            "value": "doctor",
+            "type": "string"
+          },
+          {
+            "key": "password",
+            "value": "doctor123",
+            "type": "string"
+          }
+        ]
+      },
+      "item": [
+        {
+          "name": "Edit clinical notes",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('No GraphQL errors', () => pm.expect(body.errors).to.be.undefined);",
+                  "pm.test('Notes saved', () => pm.expect(body.data.updateClinicalNotes.notes).to.eql('Patient reports mild headaches. Review in 2 weeks.'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "graphql",
+              "graphql": {
+                "query": "mutation UpdateClinicalNotes($id: ID!, $notes: String!) {\n  updateClinicalNotes(id: $id, notes: $notes) {\n    id\n    notes\n  }\n}\n",
+                "variables": "{\n  \"id\": \"{{appointmentId}}\",\n  \"notes\": \"Patient reports mild headaches. Review in 2 weeks.\"\n}"
+              }
+            },
+            "url": {
+              "raw": "{{schedulingUrl}}/graphql",
+              "host": [
+                "{{schedulingUrl}}"
+              ],
+              "path": [
+                "graphql"
+              ]
+            }
+          }
+        },
+        {
+          "name": "List full history of patient 1",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('No GraphQL errors', () => pm.expect(body.errors).to.be.undefined);",
+                  "const list = body.data.appointmentsByPatient;",
+                  "pm.test('Includes past appointments', () => pm.expect(list.some(a => new Date(a.scheduledAt).getTime() < Date.now())).to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "graphql",
+              "graphql": {
+                "query": "query AppointmentsByPatient($patientId: ID!, $onlyFuture: Boolean) {\n  appointmentsByPatient(patientId: $patientId, onlyFuture: $onlyFuture) {\n    id\n    status\n    scheduledAt\n    reason\n    notes\n    patient { id }\n  }\n}\n",
+                "variables": "{\n  \"patientId\": \"{{patientId}}\",\n  \"onlyFuture\": false\n}"
+              }
+            },
+            "url": {
+              "raw": "{{schedulingUrl}}/graphql",
+              "host": [
+                "{{schedulingUrl}}"
+              ],
+              "path": [
+                "graphql"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create appointment to cancel",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const iso = ms => new Date(Date.now() + ms).toISOString().replace(/\\.\\d{3}Z$/, 'Z');",
+                  "pm.collectionVariables.set('inFiveDays', iso(120 * 3600000));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('No GraphQL errors', () => pm.expect(body.errors).to.be.undefined);",
+                  "const a = body.data.createAppointment;",
+                  "pm.test('Created as SCHEDULED', () => pm.expect(a.status).to.eql('SCHEDULED'));",
+                  "pm.collectionVariables.set('cancelAppointmentId', a.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "graphql",
+              "graphql": {
+                "query": "mutation CreateAppointment($input: CreateAppointmentInput!) {\n  createAppointment(input: $input) {\n    id\n    status\n    scheduledAt\n    reason\n    notes\n    patient { id name }\n    doctor { id name }\n  }\n}\n",
+                "variables": "{\n  \"input\": {\n    \"patientId\": \"{{patientId}}\",\n    \"doctorId\": \"{{doctorId}}\",\n    \"scheduledAt\": \"{{inFiveDays}}\",\n    \"reason\": \"Dermatology consult\"\n  }\n}"
+              }
+            },
+            "url": {
+              "raw": "{{schedulingUrl}}/graphql",
+              "host": [
+                "{{schedulingUrl}}"
+              ],
+              "path": [
+                "graphql"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Cancel appointment",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('No GraphQL errors', () => pm.expect(body.errors).to.be.undefined);",
+                  "pm.test('Status CANCELLED', () => pm.expect(body.data.updateAppointment.status).to.eql('CANCELLED'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "graphql",
+              "graphql": {
+                "query": "mutation UpdateAppointment($id: ID!, $input: UpdateAppointmentInput!) {\n  updateAppointment(id: $id, input: $input) {\n    id\n    status\n    scheduledAt\n    reason\n    notes\n    patient { id name }\n    doctor { id name }\n  }\n}\n",
+                "variables": "{\n  \"id\": \"{{cancelAppointmentId}}\",\n  \"input\": {\n    \"status\": \"CANCELLED\"\n  }\n}"
+              }
+            },
+            "url": {
+              "raw": "{{schedulingUrl}}/graphql",
+              "host": [
+                "{{schedulingUrl}}"
+              ],
+              "path": [
+                "graphql"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Patient",
+      "description": "PATIENT (linked to patient 1, Ana Souza) can only view their own appointments.",
+      "auth": {
+        "type": "basic",
+        "basic": [
+          {
+            "key": "username",
+            "value": "patient",
+            "type": "string"
+          },
+          {
+            "key": "password",
+            "value": "patient123",
+            "type": "string"
+          }
+        ]
+      },
+      "item": [
+        {
+          "name": "List my appointments",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('No GraphQL errors', () => pm.expect(body.errors).to.be.undefined);",
+                  "pm.test('All belong to me', () => body.data.appointmentsByPatient.forEach(a => pm.expect(a.patient.id).to.eql(pm.collectionVariables.get('patientId'))));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "graphql",
+              "graphql": {
+                "query": "query AppointmentsByPatient($patientId: ID!, $onlyFuture: Boolean) {\n  appointmentsByPatient(patientId: $patientId, onlyFuture: $onlyFuture) {\n    id\n    status\n    scheduledAt\n    reason\n    notes\n    patient { id }\n  }\n}\n",
+                "variables": "{\n  \"patientId\": \"{{patientId}}\"\n}"
+              }
+            },
+            "url": {
+              "raw": "{{schedulingUrl}}/graphql",
+              "host": [
+                "{{schedulingUrl}}"
+              ],
+              "path": [
+                "graphql"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get my appointment by id",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('No GraphQL errors', () => pm.expect(body.errors).to.be.undefined);",
+                  "pm.test('Returns my appointment', () => pm.expect(body.data.appointment.patient.id).to.eql(pm.collectionVariables.get('patientId')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "graphql",
+              "graphql": {
+                "query": "query Appointment($id: ID!) {\n  appointment(id: $id) {\n    id\n    status\n    scheduledAt\n    reason\n    notes\n    patient { id name }\n    doctor { id name }\n  }\n}\n",
+                "variables": "{\n  \"id\": \"{{appointmentId}}\"\n}"
+              }
+            },
+            "url": {
+              "raw": "{{schedulingUrl}}/graphql",
+              "host": [
+                "{{schedulingUrl}}"
+              ],
+              "path": [
+                "graphql"
+              ]
+            }
+          }
+        },
+        {
+          "name": "DENIED: list another patient's appointments",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200 (GraphQL reports errors in the body)', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Classification is FORBIDDEN', () => pm.expect(body.errors[0].extensions.classification).to.eql('FORBIDDEN'));",
+                  "pm.test('No data returned', () => pm.expect(body.data && body.data.appointmentsByPatient).to.not.be.ok);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "graphql",
+              "graphql": {
+                "query": "query AppointmentsByPatient($patientId: ID!, $onlyFuture: Boolean) {\n  appointmentsByPatient(patientId: $patientId, onlyFuture: $onlyFuture) {\n    id\n    status\n    scheduledAt\n    reason\n    notes\n    patient { id }\n  }\n}\n",
+                "variables": "{\n  \"patientId\": \"{{otherPatientId}}\"\n}"
+              }
+            },
+            "url": {
+              "raw": "{{schedulingUrl}}/graphql",
+              "host": [
+                "{{schedulingUrl}}"
+              ],
+              "path": [
+                "graphql"
+              ]
+            }
+          }
+        },
+        {
+          "name": "DENIED: get another patient's appointment",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200 (GraphQL reports errors in the body)', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Classification is FORBIDDEN', () => pm.expect(body.errors[0].extensions.classification).to.eql('FORBIDDEN'));",
+                  "pm.test('No data returned', () => pm.expect(body.data && body.data.appointment).to.not.be.ok);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "graphql",
+              "graphql": {
+                "query": "query Appointment($id: ID!) {\n  appointment(id: $id) {\n    id\n    status\n    scheduledAt\n    reason\n    notes\n    patient { id name }\n    doctor { id name }\n  }\n}\n",
+                "variables": "{\n  \"id\": \"3\"\n}"
+              }
+            },
+            "url": {
+              "raw": "{{schedulingUrl}}/graphql",
+              "host": [
+                "{{schedulingUrl}}"
+              ],
+              "path": [
+                "graphql"
+              ]
+            },
+            "description": "Appointment 3 is seeded for patient 2 (Bruno Lima)."
+          }
+        },
+        {
+          "name": "DENIED: create appointment",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200 (GraphQL reports errors in the body)', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Classification is FORBIDDEN', () => pm.expect(body.errors[0].extensions.classification).to.eql('FORBIDDEN'));",
+                  "pm.test('No data returned', () => pm.expect(body.data && body.data.createAppointment).to.not.be.ok);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "graphql",
+              "graphql": {
+                "query": "mutation CreateAppointment($input: CreateAppointmentInput!) {\n  createAppointment(input: $input) {\n    id\n    status\n    scheduledAt\n    reason\n    notes\n    patient { id name }\n    doctor { id name }\n  }\n}\n",
+                "variables": "{\n  \"input\": {\n    \"patientId\": \"{{patientId}}\",\n    \"doctorId\": \"{{doctorId}}\",\n    \"scheduledAt\": \"{{inTwoDays}}\",\n    \"reason\": \"Self-booked\"\n  }\n}"
+              }
+            },
+            "url": {
+              "raw": "{{schedulingUrl}}/graphql",
+              "host": [
+                "{{schedulingUrl}}"
+              ],
+              "path": [
+                "graphql"
+              ]
+            }
+          }
+        },
+        {
+          "name": "DENIED: update appointment",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200 (GraphQL reports errors in the body)', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Classification is FORBIDDEN', () => pm.expect(body.errors[0].extensions.classification).to.eql('FORBIDDEN'));",
+                  "pm.test('No data returned', () => pm.expect(body.data && body.data.updateAppointment).to.not.be.ok);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "graphql",
+              "graphql": {
+                "query": "mutation UpdateAppointment($id: ID!, $input: UpdateAppointmentInput!) {\n  updateAppointment(id: $id, input: $input) {\n    id\n    status\n    scheduledAt\n    reason\n    notes\n    patient { id name }\n    doctor { id name }\n  }\n}\n",
+                "variables": "{\n  \"id\": \"{{appointmentId}}\",\n  \"input\": {\n    \"reason\": \"Changed by patient\"\n  }\n}"
+              }
+            },
+            "url": {
+              "raw": "{{schedulingUrl}}/graphql",
+              "host": [
+                "{{schedulingUrl}}"
+              ],
+              "path": [
+                "graphql"
+              ]
+            }
+          }
+        },
+        {
+          "name": "DENIED: edit clinical notes",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200 (GraphQL reports errors in the body)', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Classification is FORBIDDEN', () => pm.expect(body.errors[0].extensions.classification).to.eql('FORBIDDEN'));",
+                  "pm.test('No data returned', () => pm.expect(body.data && body.data.updateClinicalNotes).to.not.be.ok);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "graphql",
+              "graphql": {
+                "query": "mutation UpdateClinicalNotes($id: ID!, $notes: String!) {\n  updateClinicalNotes(id: $id, notes: $notes) {\n    id\n    notes\n  }\n}\n",
+                "variables": "{\n  \"id\": \"{{appointmentId}}\",\n  \"notes\": \"Patients may not write this.\"\n}"
+              }
+            },
+            "url": {
+              "raw": "{{schedulingUrl}}/graphql",
+              "host": [
+                "{{schedulingUrl}}"
+              ],
+              "path": [
+                "graphql"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Error handling",
+      "description": "Optional: shows how invalid input is reported.",
+      "auth": {
+        "type": "basic",
+        "basic": [
+          {
+            "key": "username",
+            "value": "doctor",
+            "type": "string"
+          },
+          {
+            "key": "password",
+            "value": "doctor123",
+            "type": "string"
+          }
+        ]
+      },
+      "item": [
+        {
+          "name": "Unknown appointment id -> NOT_FOUND",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200 (GraphQL reports errors in the body)', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Classification is NOT_FOUND', () => pm.expect(body.errors[0].extensions.classification).to.eql('NOT_FOUND'));",
+                  "pm.test('No data returned', () => pm.expect(body.data && body.data.appointment).to.not.be.ok);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "graphql",
+              "graphql": {
+                "query": "query Appointment($id: ID!) {\n  appointment(id: $id) {\n    id\n    status\n    scheduledAt\n    reason\n    notes\n    patient { id name }\n    doctor { id name }\n  }\n}\n",
+                "variables": "{\n  \"id\": \"999999\"\n}"
+              }
+            },
+            "url": {
+              "raw": "{{schedulingUrl}}/graphql",
+              "host": [
+                "{{schedulingUrl}}"
+              ],
+              "path": [
+                "graphql"
+              ]
+            }
+          }
+        },
+        {
+          "name": "doctorId that is not a DOCTOR -> error",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200 (GraphQL reports errors in the body)', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Rejected with an error', () => pm.expect(body.errors).to.be.an('array').that.is.not.empty);",
+                  "pm.test('Nothing created', () => pm.expect(body.data && body.data.createAppointment).to.not.be.ok);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "graphql",
+              "graphql": {
+                "query": "mutation CreateAppointment($input: CreateAppointmentInput!) {\n  createAppointment(input: $input) {\n    id\n    status\n    scheduledAt\n    reason\n    notes\n    patient { id name }\n    doctor { id name }\n  }\n}\n",
+                "variables": "{\n  \"input\": {\n    \"patientId\": \"{{patientId}}\",\n    \"doctorId\": \"2\",\n    \"scheduledAt\": \"{{inTwoDays}}\",\n    \"reason\": \"Invalid doctor\"\n  }\n}"
+              }
+            },
+            "url": {
+              "raw": "{{schedulingUrl}}/graphql",
+              "host": [
+                "{{schedulingUrl}}"
+              ],
+              "path": [
+                "graphql"
+              ]
+            },
+            "description": "User 2 is the nurse, so the service must reject it."
+          }
+        }
+      ]
+    }
+  ]
+}
